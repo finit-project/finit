@@ -212,6 +212,11 @@ static int fsck(int pass)
 		if (mnt->mnt_passno == 0 || mnt->mnt_passno != pass)
 			continue;
 
+		if (hasmntopt(mnt, "noauto")) {
+			dbg("Skipping fsck of %s, marked noauto", mnt->mnt_fsname);
+			continue;
+		}
+
 		/* Device to maybe fsck,  */
 		dev = mnt->mnt_fsname;
 
@@ -424,6 +429,11 @@ static void fs_swapon(char *cmd, size_t len)
 	while ((mnt = getmntent(fp))) {
 		if (strcmp(mnt->mnt_type, MNTTYPE_SWAP))
 			continue;
+
+		if (hasmntopt(mnt, "noauto")) {
+			dbg("Skipping swap %s, marked noauto", mnt->mnt_fsname);
+			continue;
+		}
 
 		snprintf(cmd, len, "swapon %s", mnt->mnt_fsname);
 		run_interactive(cmd, "Enabling swap %s", mnt->mnt_fsname);

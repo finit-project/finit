@@ -187,6 +187,11 @@ static void fs_swapoff(void)
 		if (strcmp(mnt->mnt_type, MNTTYPE_SWAP))
 			continue;
 
+		if (hasmntopt(mnt, "noauto")) {
+			dbg("Skipping swap %s, marked noauto", mnt->mnt_fsname);
+			continue;
+		}
+
 		snprintf(cmd, sizeof(cmd), "swapoff %s", mnt->mnt_fsname);
 		run_interactive(cmd, "Disabling swap %s", mnt->mnt_fsname);
 	}
