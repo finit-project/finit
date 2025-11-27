@@ -48,6 +48,7 @@ void      service_step_all       (int types);
 void      service_worker         (void *unused);
 
 int       service_completed      (svc_t **svc);
+void      service_log_incomplete (void);
 void      service_notify_reconf  (void);
 
 void      service_init           (uev_ctx_t *ctx);

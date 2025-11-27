@@ -3054,6 +3054,42 @@ int service_completed(svc_t **svcp)
 }
 
 /*
+ * service_log_incomplete - Log all incomplete run/task in current runlevel
+ *
+ * Iterates through all run/task services and logs those that have not
+ * yet completed. Useful for diagnosing bootstrap delays or reporting
+ * what was skipped when user interrupts bootstrap wait.
+ */
+void service_log_incomplete(void)
+{
+	svc_t *svc, *iter = NULL;
+	int count = 0;
+
+	for (svc = svc_iterator(&iter, 1); svc; svc = svc_iterator(&iter, 0)) {
+		if (!svc_is_runtask(svc))
+			continue;
+
+		if (!svc_enabled(svc))
+			continue;
+
+		if (svc_conflicts(svc))
+			continue;
+
+		if (strstr(svc->cond, plugin_hook_str(HOOK_SVC_UP)) ||
+		    strstr(svc->cond, plugin_hook_str(HOOK_SYSTEM_UP)))
+			continue;
+
+		if (!svc->once) {
+			logit(LOG_WARNING, "Incomplete: %s", svc_ident(svc, NULL, 0));
+			count++;
+		}
+	}
+
+	if (count == 0)
+		logit(LOG_WARNING, "No incomplete run/task services found");
+}
+
+/*
  * Called in SM_RELOAD_WAIT_STATE to update unmodified non-native
  * services' READY condition to the current generation.  Similar
  * to the pidfile_reconf() function for native services.
