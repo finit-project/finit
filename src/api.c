@@ -68,7 +68,8 @@ static int stop(svc_t *svc, void *user_data)
 	service_timeout_cancel(svc);
 	svc_stop(svc);
 	service_step(svc);
-	service_step_all(SVC_TYPE_ANY);
+	if (!IS_RESERVED_RUNLEVEL(runlevel))
+		service_step_all(SVC_TYPE_ANY);
 
 	return 0;
 }
@@ -83,7 +84,8 @@ static int start(svc_t *svc, void *user_data)
 	service_timeout_cancel(svc);
 	svc_start(svc);
 	service_step(svc);
-	service_step_all(SVC_TYPE_ANY);
+	if (!IS_RESERVED_RUNLEVEL(runlevel))
+		service_step_all(SVC_TYPE_ANY);
 
 	return 0;
 }
@@ -391,11 +393,6 @@ static void api_cb(uev_t *w, void *arg, int events)
 		}
 
 		switch (rq.cmd) {
-		case INIT_CMD_RELOAD:
-		case INIT_CMD_START_SVC:
-		case INIT_CMD_RESTART_SVC:
-		case INIT_CMD_STOP_SVC:
-		case INIT_CMD_RELOAD_SVC:
 		case INIT_CMD_REBOOT:
 		case INIT_CMD_HALT:
 		case INIT_CMD_POWEROFF:
@@ -453,6 +450,10 @@ static void api_cb(uev_t *w, void *arg, int events)
 			break;
 
 		case INIT_CMD_RELOAD: /* 'init q' and 'initctl reload' */
+			if (IS_RESERVED_RUNLEVEL(runlevel)) {
+				warnx("Ignoring reload in runlevel S and 6/0.");
+				goto done;
+			}
 			dbg("reload");
 			sm_reload();
 			break;
@@ -576,7 +577,7 @@ static void api_cb(uev_t *w, void *arg, int events)
 			dbg("Unsupported cmd: %d", rq.cmd);
 			break;
 		}
-
+	done:
 		if (result)
 			rq.cmd = INIT_CMD_NACK;
 		else
