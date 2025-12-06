@@ -271,25 +271,22 @@ static int lredirect(svc_t *svc)
 {
 	static int have_sysklogd = -1;
 	pid_t svc_pid = getpid();
+	int pipefd[2];
 	pid_t pid;
 	int fd;
 
 	/*
-	 * Open PTY to connect to logger.  A pty isn't buffered
-	 * like a pipe, and it eats newlines so they aren't logged
+	 * Use a pipe to connect to logger.  This ensures isatty()
+	 * returns false for the service, preventing programs from
+	 * emitting ANSI escape codes and other TTY-specific output.
 	 */
-	fd = posix_openpt(O_RDWR);
-	if (fd == -1) {
-		dbg("Failed posix_openpt(), errno %d: %s", errno, strerror(errno));
+	if (pipe(pipefd) == -1) {
+		dbg("Failed pipe(), errno %d: %s", errno, strerror(errno));
 		svc->log.enabled = 0;
+
 		return -1;
 	}
-	if (grantpt(fd) == -1 || unlockpt(fd) == -1) {
-		dbg("Failed grantpt()|unlockpt(), errno %d: %s", errno, strerror(errno));
-		close(fd);
-		svc->log.enabled = 0;
-		return -1;
-	}
+	fd = pipefd[1];  /* Write end for service */
 
 	/*
 	 * First time, check if we have sysklogd logger tool.
@@ -319,17 +316,12 @@ static int lredirect(svc_t *svc)
 		char *prio = "daemon.info";
 		char buf[MAX_IDENT_LEN];
 		char *tag;
-		int fds;
 
 		sched_yield();
 
-		fds = open(ptsname(fd), O_RDONLY);
-		close(fd);
-		if (fds == -1) {
-			logit(LOG_WARNING, "failed open() ptsname(%d), errno %d", fd, errno);
-			_exit(0);
-		}
-		dup2(fds, STDIN_FILENO);
+		close(pipefd[1]);  /* Close write end in logger */
+		dup2(pipefd[0], STDIN_FILENO);
+		close(pipefd[0]);
 
 		/* Reset signals */
 		sig_unblock();
@@ -385,10 +377,11 @@ static int lredirect(svc_t *svc)
 		_exit(1);
 	}
 
-	dup2(fd, STDOUT_FILENO);
-	dup2(fd, STDERR_FILENO);
+	close(pipefd[0]);  /* Close read end in service */
+	dup2(pipefd[1], STDOUT_FILENO);
+	dup2(pipefd[1], STDERR_FILENO);
 
-	return close(fd);
+	return close(pipefd[1]);
 }
 
 /*

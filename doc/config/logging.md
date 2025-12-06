@@ -39,3 +39,25 @@ Log rotation is controlled using the global `log` setting.
 **Example:**
 
     service log:prio:user.warn,tag:ntpd /sbin/ntpd pool.ntp.org -- NTP daemon
+
+Output Buffering
+----------------
+
+When using the `log` directive, Finit redirects the service's stdout and
+stderr to a pipe connected to a logger process.  Programs detect this as
+non-interactive output (i.e., `isatty()` returns false) and typically
+switch from line-buffered to fully-buffered mode.
+
+Most well-behaved daemons explicitly flush their output or use syslog
+directly, so this is rarely an issue.  However, if a service's log
+messages appear delayed or batched, you can force line-buffered output
+by wrapping the command with `stdbuf`:
+
+    service log /usr/bin/stdbuf -oL /path/to/command -- My service
+
+The `-oL` option forces line-buffered output, and `-o0` forces unbuffered
+output.  See `stdbuf(1)` for details.
+
+> [!NOTE]
+> Using `stdbuf` is rarely necessary. Only use it if you observe actual
+> buffering issues with a specific service.
