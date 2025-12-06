@@ -166,3 +166,21 @@ sync(2) has been called, twice.
 > "On Linux, sync is only guaranteed to schedule the dirty blocks for
 > writing; it can actually take a short time before all the blocks are
 > finally written.
+
+**Syntax:** `reboot-watchdog <on|off|true|false|1|0>`
+
+Controls whether the system should reboot via the watchdog timer (WDT)
+or directly via the SoC/kernel.  When enabled, Finit will:
+
+ 1. Send `SIGPWR` to the registered watchdog daemon before shutdown
+ 2. Send `SIGTERM` to the watchdog daemon and wait up to 10 seconds
+    for the watchdog to trigger a hardware reset
+
+When disabled (default), Finit skips the watchdog reboot logic and
+calls the kernel's `reboot(2)` syscall directly for a clean SoC reboot.
+
+*Default:* off (reboot via SoC)
+
+> [!NOTE]
+> This setting only affects reboots.  The watchdog daemon will still
+> run and monitor the system during normal operation.

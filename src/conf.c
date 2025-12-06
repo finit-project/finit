@@ -60,6 +60,7 @@ int   single    = 0;		/* single user mode from kernel cmdline */
 int   bootstrap = 1;		/* set while bootstrapping (for TTYs) */
 int   kerndebug = 0;		/* set if /proc/sys/kernel/printk > 7 */
 int   syncsec   = 0;		/* reboot delay */
+int   wdtreboot = 0;		/* reboot via watchdog, default: SOC */
 int   readiness = SVC_NOTIFY_PID;
 char *finit_conf= NULL;
 char *finit_rcsd= NULL;
@@ -1031,6 +1032,11 @@ static int parse_static(char *line, int is_rcsd)
 
 	if (MATCH_CMD(line, "reboot-delay ", x)) {
 		syncsec = strtonum(strip_line(x), 0, 60, NULL);
+		return 0;
+	}
+
+	if (MATCH_CMD(line, "reboot-watchdog ", x)) {
+		wdtreboot = get_bool(strip_line(x), 0);
 		return 0;
 	}
 

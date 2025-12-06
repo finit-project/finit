@@ -10,14 +10,21 @@ many embedded systems this is crucial to ensure all circuits on the
 board are properly reset for the next boot, in effect ensuring the
 system works the same after both a power-on and reboot event.
 
+> [!NOTE]
+> The watchdog reboot delegation can be enabled with the `reboot-watchdog`
+> configuration option in `/etc/finit.conf`.  By default this is disabled
+> and the system reboots directly via the SoC using the kernel's `reboot(2)`
+> syscall.  See [Runlevels](config/runlevels.md) for details.
+
 The delegation is performed at the very last steps of system shutdown,
-if reboot has been selected and an elected watchdog is known, first a
-`SIGPWR` is sent to advise watchdogd of the pending reboot.  Then, when
-the necessary steps of preparing the system for shutdown (umount etc.)
-are completed, Finit sends `SIGTERM` to watchdogd and puts itself in a
-10 sec timeout loop waiting for the WDT to reset the board.  If a reset
-is not done before the timeout, Finit falls back to`reboot(RB_AUTOBOOT)`
-which tells the kernel to do the reboot.
+if reboot has been selected, `reboot-watchdog` is enabled, and an elected
+watchdog is known.  First a `SIGPWR` is sent to advise watchdogd of the
+pending reboot.  Then, when the necessary steps of preparing the system
+for shutdown (umount etc.) are completed, Finit sends `SIGTERM` to
+watchdogd and puts itself in a 10 sec timeout loop waiting for the WDT
+to reset the board.  If a reset is not done before the timeout, Finit
+falls back to `reboot(RB_AUTOBOOT)` which tells the kernel to do the
+reboot.
 
 An external watchdog service can also be used.  The more advanced cousin
 [watchdogd](https://github.com/troglobit/watchdogd/) is the recommended

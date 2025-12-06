@@ -358,7 +358,7 @@ void do_shutdown(shutop_t op)
 		return;
 	}
 
-	if (wdog) {
+	if (wdtreboot && wdog) {
 		print(kill(wdog->pid, SIGPWR) == 1, "Advising watchdog, system going down");
 		do_sleep(2);
 	}
@@ -405,17 +405,17 @@ void do_shutdown(shutop_t op)
 
 	/* Reboot via watchdog or kernel, or shutdown? */
 	if (op == SHUT_REBOOT) {
-		print(0, "Rebooting ...");
-		if (wdog && wdog->pid > 1) {
+		if (wdtreboot && wdog && wdog->pid > 1) {
 			int timeout = 10;
 
 			/* Wait here until the WDT reboots, or timeout with fallback */
+			print(0, "Rebooting using WDT, please wait ...");
 			print(kill(wdog->pid, SIGTERM) == 1, "Pending watchdog reboot");
 			while (timeout--)
 				do_sleep(1);
 		}
 
-		dbg("Rebooting ...");
+		print(0, "Rebooting ...");
 		reboot(RB_AUTOBOOT);
 	} else if (op == SHUT_OFF) {
 		print(0, "Powering down ...");
