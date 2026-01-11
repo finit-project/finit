@@ -627,8 +627,11 @@ static pid_t service_fork(svc_t *svc)
 			set_uid(uid, svc);
 
 			/* Set default path for regular users */
-			if (uid > 0)
+			if (uid > 0) {
 				setenv("PATH", _PATH_DEFPATH, 1);
+				setenv("USER", svc->username, 1);
+				setenv("LOGNAME", svc->username, 1);
+			}
 			if (home) {
 				setenv("HOME", home, 1);
 				if (chdir(home)) {
