@@ -177,7 +177,7 @@ static void sys_cond(const char *cond, int set)
 	}
 }
 
-static int fgetline(char *path, char *buf, size_t len)
+static int fgetline(const char *path, char *buf, size_t len)
 {
 	FILE *fp;
 
@@ -231,7 +231,7 @@ static int is_ac(const char *type)
 /*
  * Handle power_supply change events (original keventd functionality).
  */
-static void power_supply_change(struct uevent *ev, char *buf, size_t len)
+static void power_supply_change(const struct uevent *ev, char *buf, size_t len)
 {
 	int ac = 0;
 	size_t i, hdrlen;
@@ -344,7 +344,7 @@ static void init_power_supply(void)
 
 	n = scandir(_PATH_SYSFS_PWR, &d, NULL, alphasort);
 	for (i = 0; i < n; i++) {
-		char *nm = d[i]->d_name;
+		const char *nm = d[i]->d_name;
 		char buf[10];
 
 		snprintf(path, sizeof(path), "%s/%s/type", _PATH_SYSFS_PWR, nm);
@@ -430,12 +430,12 @@ static int usage(int rc)
  */
 int main(int argc, char *argv[])
 {
-	struct sockaddr_nl nls = { 0 };
-	struct pollfd pfd;
-	char buf[UEVENT_BUFFER_SIZE];
 	unsigned int nlgroups = REBC_DEFAULT_NLGROUP;
+	struct sockaddr_nl nls = { 0 };
+	char buf[UEVENT_BUFFER_SIZE];
 	int do_coldplug = 0;
 	int foreground = 0;
+	struct pollfd pfd;
 	int c;
 
 	/* Device nodes are created with explicit MODE= from rules or the
