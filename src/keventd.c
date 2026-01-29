@@ -53,6 +53,9 @@
 #define KEVENTD_VERSION "5.0"
 #define _PATH_SYSFS_PWR "/sys/class/power_supply"
 
+/* Default netlink group for uevent rebroadcast (libudev-zero convention) */
+#define REBC_DEFAULT_NLGROUP 4
+
 static int num_ac_online;
 static int num_ac;
 
@@ -77,6 +80,74 @@ void logit(int prio, const char *fmt, ...)
 }
 #define panic(fmt, args...) { logit(LOG_CRIT, fmt ":%s", ##args, strerror(errno)); exit(1); }
 #define warn(fmt, args...)  { logit(LOG_WARNING, fmt ":%s", ##args, strerror(errno)); }
+
+/*
+ * Netlink rebroadcast support.
+ *
+ * The Linux kernel sends uevents to netlink multicast group 1 (bit 0)
+ * of NETLINK_KOBJECT_UEVENT.  Only the device manager should listen on
+ * this raw kernel group.  Userspace consumers (e.g., applications using
+ * libudev) expect to receive processed events on a separate group --
+ * conventionally group 4 (bit 2), established by systemd/udevd.
+ *
+ * libudev-zero (https://github.com/illiliti/libudev-zero), a daemonless
+ * replacement for libudev, listens on group 0x4 for these rebroadcast
+ * events.  Without rebroadcast, graphical applications, Wayland/X11
+ * compositors, libinput, and anything else using libudev to monitor
+ * device hotplug will never see any events.
+ *
+ * Rebroadcast is enabled by default to group 0x4.  Use -g to override
+ * the group mask, or -G to disable rebroadcast entirely.  Bit 0 is
+ * always masked out to prevent a feedback loop with the kernel group.
+ */
+static int          rebc_fd = -1;
+static unsigned int rebc_nlgroups;
+
+static void rebc_init(unsigned int nlgroups)
+{
+	/* Mask out bit 0 (kernel group) to prevent feedback loop */
+	if (nlgroups & 1) {
+		logit(LOG_WARNING, "rebroadcast group mask 0x%x includes kernel group (bit 0), masking it out", nlgroups);
+		nlgroups &= ~1U;
+	}
+	if (!nlgroups) {
+		logit(LOG_WARNING, "no valid rebroadcast groups remaining, rebroadcast disabled");
+		return;
+	}
+
+	rebc_fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_KOBJECT_UEVENT);
+	if (rebc_fd == -1) {
+		warn("failed creating rebroadcast socket");
+		return;
+	}
+
+	rebc_nlgroups = nlgroups;
+	logit(LOG_NOTICE, "rebroadcasting uevents to netlink group(s) 0x%x", nlgroups);
+}
+
+static void rebc_event(char *buf, size_t len)
+{
+	struct sockaddr_nl sa = { 0 };
+	struct msghdr hdr = { 0 };
+	struct iovec iov;
+
+	if (rebc_fd == -1)
+		return;
+
+	iov.iov_base = buf;
+	iov.iov_len  = len;
+
+	sa.nl_family = AF_NETLINK;
+	sa.nl_groups = rebc_nlgroups;
+
+	hdr.msg_name    = &sa;
+	hdr.msg_namelen = sizeof(sa);
+	hdr.msg_iov     = &iov;
+	hdr.msg_iovlen  = 1;
+
+	if (sendmsg(rebc_fd, &hdr, 0) == -1)
+		logit(LOG_DEBUG, "rebroadcast failed: %s", strerror(errno));
+}
 
 static void sys_cond(const char *cond, int set)
 {
@@ -316,15 +387,17 @@ static void shut_down(int signo)
 static int usage(int rc)
 {
 	fprintf(stderr,
-		"Usage: keventd [-dhnv] [-c]\n"
+		"Usage: keventd [-dGhnv] [-c] [-g GROUP]\n"
 		"\n"
 		"Options:\n"
 		"  -c        Run coldplug at startup\n"
 		"  -d        Enable debug mode (foreground, verbose)\n"
+		"  -g GROUP  Override netlink rebroadcast group (default: %d)\n"
+		"  -G        Disable netlink rebroadcast entirely\n"
 		"  -h        Show this help text\n"
 		"  -n        Run in foreground (no daemon)\n"
 		"  -v        Show version\n"
-		"\n");
+		"\n", REBC_DEFAULT_NLGROUP);
 
 	return rc;
 }
@@ -346,11 +419,12 @@ int main(int argc, char *argv[])
 	struct sockaddr_nl nls = { 0 };
 	struct pollfd pfd;
 	char buf[UEVENT_BUFFER_SIZE];
+	unsigned int nlgroups = REBC_DEFAULT_NLGROUP;
 	int do_coldplug = 0;
 	int foreground = 0;
 	int c;
 
-	while ((c = getopt(argc, argv, "cdhnv")) != -1) {
+	while ((c = getopt(argc, argv, "cdg:Ghnv")) != -1) {
 		switch (c) {
 		case 'c':
 			do_coldplug = 1;
@@ -358,6 +432,12 @@ int main(int argc, char *argv[])
 		case 'd':
 			debug = 1;
 			foreground = 1;
+			break;
+		case 'g':
+			nlgroups = (unsigned int)atoi(optarg);
+			break;
+		case 'G':
+			nlgroups = 0;
 			break;
 		case 'h':
 			return usage(0);
@@ -406,6 +486,10 @@ int main(int argc, char *argv[])
 		setsockopt(pfd.fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 	}
 
+	/* Initialize rebroadcast socket (default on, -G to disable) */
+	if (nlgroups)
+		rebc_init(nlgroups);
+
 	/* Run coldplug if requested */
 	if (do_coldplug)
 		coldplug();
@@ -413,6 +497,7 @@ int main(int argc, char *argv[])
 	logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
 
 	while (running) {
+		char rebc_buf[UEVENT_BUFFER_SIZE];
 		int len;
 
 		if (-1 == poll(&pfd, 1, -1)) {
@@ -440,9 +525,26 @@ int main(int argc, char *argv[])
 		if (!strncmp(buf, "libudev", 7))
 			continue;
 
+		/*
+		 * Save raw buffer before handle_uevent() -- uevent_parse()
+		 * modifies the buffer in-place (splits @ and = separators).
+		 * Rebroadcast needs the original kernel format intact.
+		 */
+		if (rebc_fd != -1)
+			memcpy(rebc_buf, buf, len);
+
 		handle_uevent(buf, len);
+
+		/*
+		 * Rebroadcast after processing so that device nodes and
+		 * symlinks exist by the time consumers receive the event.
+		 */
+		if (rebc_fd != -1)
+			rebc_event(rebc_buf, len);
 	}
 
+	if (rebc_fd != -1)
+		close(rebc_fd);
 	close(pfd.fd);
 	logit(LOG_NOTICE, "keventd shutting down");
 
