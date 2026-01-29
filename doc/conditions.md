@@ -111,26 +111,30 @@ Built-in Conditions
 
 Finit comes with a set of plugins for conditions:
 
- - `devmon` (built-in)
- - `netlink`
- - `pidfile`
+ - `keventd`: provides `<dev/...>` and `<sys/pwr/...>`
+ - `devmon` (built-in fallback for `<dev/...>` without keventd)
+ - `netlink`: provides `<net/...>`
+ - `pidfile`: provides `<pid/...>`
  - `sys`
  - `usr`
 
-The `devmon` (built-in) plugin monitors `/dev` and `/dev/dir` for device
-nodes being created and removed.  It is active only when a run, task, or
-service has declared a `<dev/foo>` or `<dev/dir/bar>` condition.
+The `dev/` conditions are provided by `keventd`, the built-in device
+manager.  When keventd creates a device node in `/dev`, it also asserts
+the corresponding `dev/` condition.  When a device is removed, the
+condition is cleared.  If keventd is not in use (an external device
+manager like udevd is used instead), the `devmon` built-in provides the
+same conditions by monitoring `/dev` and `/dev/dir` with inotify.
 
-The `pidfile` plugin (recursively) watches `/run/` (recursively) for PID
-files created by the monitored services, and sets a corresponding
-condition in the `pid/` namespace.
+The `pidfile` plugin (recursively) watches `/run/` for PID files created
+by the monitored services, and sets a corresponding condition in the
+`pid/` namespace.
 
 Similarly, the `netlink` plugin provides basic conditions for when an
 interface is brought up/down and when a default route (gateway) is set,
 in the `net/` namespace.
 
-The `sys` and `usr` plugins monitor are passive condition monitors where
-the action is provided by `keventd`, signal handlers, and in the case of
+The `sys` and `usr` plugins are passive condition monitors where the
+action is provided by `keventd`, signal handlers, and in the case of
 `usr`, the end-user via the `initctl` tool.
 
 Additionally, the various states of a run/task/sysv/service can also be
