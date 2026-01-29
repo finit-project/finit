@@ -37,6 +37,11 @@
 #include "finit.h"
 #include "log.h"
 
+/* clone3() was added in Linux 5.3, syscall number 435 on all archs */
+#ifndef __NR_clone3
+#define __NR_clone3 435
+#endif
+
 /* Clone3 flags from linux/sched.h */
 #ifndef CLONE_INTO_CGROUP
 #define CLONE_INTO_CGROUP 0x200000000ULL
@@ -57,11 +62,7 @@ struct clone3_args {
 	uint64_t cgroup;           /* Cgroup file descriptor */
 } __attribute__((aligned(8)));
 
-#ifdef __NR_clone3
 static int use_clone3 = 1;
-#else
-static int use_clone3 = 0;
-#endif
 
 int has_clone3(void)
 {
