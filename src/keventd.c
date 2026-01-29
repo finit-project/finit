@@ -1,4 +1,17 @@
-/* Listens to kernel events like AC power status and manages sys/ conditions
+/* Unified device manager - kernel events, device nodes, symlinks, conditions
+ *
+ * TODO / known limitations
+ *   - firmware_load() copies synchronously in the main event loop; a
+ *     multi-MB blob (e.g. iwlwifi) blocks all other event handling for
+ *     the duration.  Worker pool / fork-per-event would unblock this
+ *     (see .notes/keventd-eudev-gap-analysis.md, gap #8).
+ *   - firmware_load() does not handle compressed firmware (.xz, .zst).
+ *     Modern linux-firmware ships .xz blobs; kernels with
+ *     CONFIG_FW_LOADER_COMPRESS decompress in-kernel via direct
+ *     loading, but the legacy /sys/.../loading path used here passes
+ *     raw bytes only.  Adding liblzma/libzstd would close this gap for
+ *     drivers using the userhelper fallback on systems without
+ *     CONFIG_FW_LOADER_COMPRESS.
  *
  * Copyright (c) 2021-2025  Joachim Wiberg <troglobit@gmail.com>
  *
@@ -23,6 +36,7 @@
 
 #include <errno.h>
 #include <dirent.h>
+#include <getopt.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -33,6 +47,7 @@
 #include <unistd.h>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 
 #include <linux/types.h>
@@ -44,11 +59,13 @@
 # include <lite/lite.h>
 #endif
 
+#include "keventd.h"
 #include "cond.h"
 #include "pid.h"
 #include "util.h"
 
-#define _PATH_SYSFS_PWR  "/sys/class/power_supply"
+#define KEVENTD_VERSION "5.0"
+#define _PATH_SYSFS_PWR "/sys/class/power_supply"
 
 static int num_ac_online;
 static int num_ac;
@@ -75,7 +92,7 @@ void logit(int prio, const char *fmt, ...)
 #define panic(fmt, args...) { logit(LOG_CRIT, fmt ":%s", ##args, strerror(errno)); exit(1); }
 #define warn(fmt, args...)  { logit(LOG_WARNING, fmt ":%s", ##args, strerror(errno)); }
 
-static void sys_cond(char *cond, int set)
+static void sys_cond(const char *cond, int set)
 {
 	char oneshot[256];
 
@@ -108,7 +125,7 @@ static int fgetline(char *path, char *buf, size_t len)
 	return 0;
 }
 
-static int check_online(char *online)
+static int check_online(const char *online)
 {
 	int val;
 
@@ -121,9 +138,9 @@ static int check_online(char *online)
 	return val;
 }
 
-static int is_ac(char *type)
+static int is_ac(const char *type)
 {
-	char *types[] = {
+	static const char *types[] = {
 		"Mains",
 		"USB",
 		"BrickID",
@@ -140,7 +157,103 @@ static int is_ac(char *type)
 	return 0;
 }
 
-static void init(void)
+/*
+ * Handle power_supply change events (original keventd functionality).
+ */
+static void power_supply_change(struct uevent *ev, char *buf, size_t len)
+{
+	int ac = 0;
+	size_t i, hdrlen;
+
+	/* Skip past header to key=value pairs */
+	hdrlen = strlen(buf) + 1;
+	if (ev->devpath)
+		hdrlen += strlen(ev->devpath) + 1;
+
+	for (i = hdrlen; i < len; ) {
+		char *line = buf + i;
+
+		if (!*line)
+			break;
+
+		if (!strncmp(line, "POWER_SUPPLY_TYPE=", 18)) {
+			ac = is_ac(&line[18]);
+		} else if (!strncmp(line, "POWER_SUPPLY_ONLINE=", 20) && ac) {
+			if (check_online(&line[20])) {
+				if (!num_ac_online)
+					sys_cond("pwr/ac", 1);
+				num_ac_online++;
+			} else {
+				if (num_ac_online > 0)
+					num_ac_online--;
+				if (!num_ac_online)
+					sys_cond("pwr/ac", 0);
+			}
+		}
+
+		i += strlen(line) + 1;
+	}
+}
+
+/*
+ * Handle a single uevent from the kernel.
+ */
+static void handle_uevent(char *buf, size_t len)
+{
+	struct uevent ev;
+
+	if (uevent_parse(buf, len, &ev))
+		return;
+
+	logit(LOG_DEBUG, "uevent: %s@%s subsys=%s dev=%s major=%d minor=%d",
+	      uevent_action_str(ev.action), ev.devpath ?: "",
+	      ev.subsystem ?: "", ev.devname ?: "",
+	      ev.major, ev.minor);
+
+	switch (ev.action) {
+	case ACT_ADD:
+		/* Firmware loading takes priority */
+		if (ev.firmware)
+			firmware_load(&ev);
+
+		/* Module loading */
+		if (ev.modalias)
+			modprobe_load(ev.modalias);
+
+		/* Create device node if we have the info */
+		if (ev.major >= 0 && ev.minor >= 0 && ev.devname)
+			devnode_add(&ev);
+
+		/* Create symlinks */
+		symlink_add(&ev);
+		break;
+
+	case ACT_REMOVE:
+		/* Remove symlinks first */
+		symlink_del(&ev);
+
+		/* Remove device node */
+		if (ev.devname)
+			devnode_del(&ev);
+		break;
+
+	case ACT_CHANGE:
+		/* Handle power supply changes */
+		if (ev.subsystem && !strcmp(ev.subsystem, "power_supply"))
+			power_supply_change(&ev, buf, len);
+		break;
+
+	case ACT_BIND:
+	case ACT_UNBIND:
+		/* Driver bind/unbind - could trigger conditions */
+		break;
+
+	default:
+		break;
+	}
+}
+
+static void init_power_supply(void)
 {
 	struct dirent **d = NULL;
 	char *cond_dirs[] = {
@@ -161,7 +274,7 @@ static void init(void)
 	n = scandir(_PATH_SYSFS_PWR, &d, NULL, alphasort);
 	for (i = 0; i < n; i++) {
 		char *nm = d[i]->d_name;
- 		char buf[10];
+		char buf[10];
 
 		snprintf(path, sizeof(path), "%s/%s/type", _PATH_SYSFS_PWR, nm);
 		if (!fgetline(path, buf, sizeof(buf)) && is_ac(buf)) {
@@ -184,6 +297,16 @@ static void init(void)
 		sys_cond("pwr/ac", 1);
 }
 
+static void init_dev_condition_dir(void)
+{
+	char dir[256];
+
+	/* Create /run/finit/cond/dev/ directory for device conditions */
+	snprintf(dir, sizeof(dir), "%s", _PATH_CONDDEV);
+	if (mkpath(dir, 0755) && errno != EEXIST)
+		warn("Failed creating dev condition directory %s", dir);
+}
+
 static void set_logging(int prio)
 {
 	setlogmask(LOG_UPTO(prio));
@@ -204,109 +327,143 @@ static void shut_down(int signo)
 	running = 0;
 }
 
+static int usage(int rc)
+{
+	fprintf(stderr,
+		"Usage: keventd [-dhnv] [-c]\n"
+		"\n"
+		"Options:\n"
+		"  -c        Run coldplug at startup\n"
+		"  -d        Enable debug mode (foreground, verbose)\n"
+		"  -h        Show this help text\n"
+		"  -n        Run in foreground (no daemon)\n"
+		"  -v        Show version\n"
+		"\n");
+
+	return rc;
+}
+
 /*
+ * Unified device manager daemon.
+ *
  * Started by Finit as soon as possible when base filesystem is up,
- * modules have been probed, or insmodded from /etc/finit.conf, so by
- * now we should have /sys/class/power_supply/ available for probing.
- * If none is found we assert /sys/pwr/ac condition anyway, this is what
- * systemd does (ConditionACPower) and also makes most sense.
+ * modules have been probed. Handles:
+ *   - Device node creation/removal in /dev
+ *   - Persistent symlinks in /dev/disk/by-*, /dev/input/by-*
+ *   - Module loading via MODALIAS
+ *   - Firmware loading via FIRMWARE
+ *   - Power supply conditions (sys/pwr/ac)
+ *   - Device conditions (dev/)
  */
 int main(int argc, char *argv[])
 {
 	struct sockaddr_nl nls = { 0 };
 	struct pollfd pfd;
-	char buf[1024];
+	char buf[UEVENT_BUFFER_SIZE];
+	int do_coldplug = 0;
+	int foreground = 0;
+	int c;
 
-	if (argc > 1) {
-		if (!strcmp(argv[1], "-d"))
+	/* Device nodes are created with explicit MODE= from rules or the
+	 * built-in devrules table; clear umask so mknod() honors the
+	 * requested bits verbatim instead of masking them. */
+	umask(0);
+
+	while ((c = getopt(argc, argv, "cdhnv")) != -1) {
+		switch (c) {
+		case 'c':
+			do_coldplug = 1;
+			break;
+		case 'd':
 			debug = 1;
+			foreground = 1;
+			break;
+		case 'h':
+			return usage(0);
+		case 'n':
+			foreground = 1;
+			break;
+		case 'v':
+			printf("keventd v%s\n", KEVENTD_VERSION);
+			return 0;
+		default:
+			return usage(1);
+		}
 	}
 
-	if (!debug) {
+	if (!foreground) {
 		openlog("keventd", LOG_PID, LOG_DAEMON);
 		set_logging(LOG_NOTICE);
 		logon = 1;
+	} else {
+		set_logging(debug ? LOG_DEBUG : LOG_NOTICE);
 	}
 
 	signal(SIGUSR1, toggle_debug);
 	signal(SIGTERM, shut_down);
-	init();
+	signal(SIGCHLD, SIG_IGN);	/* Don't wait for modprobe children */
 
+	/* Initialize condition directories */
+	init_power_supply();
+	init_dev_condition_dir();
+
+	/* Set up netlink socket for kernel uevents */
 	pfd.events = POLLIN;
-	pfd.fd = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_KOBJECT_UEVENT);
+	pfd.fd = socket(PF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_KOBJECT_UEVENT);
 	if (pfd.fd == -1)
 		panic("failed creating netlink socket");
 
 	nls.nl_family = AF_NETLINK;
 	nls.nl_pid    = 0;
-	nls.nl_groups = -1;
+	nls.nl_groups = 1;	/* Kernel uevents are on group 1 only */
 	if (bind(pfd.fd, (void *)&nls, sizeof(struct sockaddr_nl)))
 		panic("bind failed");
 
-	logit(LOG_DEBUG, "Waiting for events ...");
+	/* Increase receive buffer to reduce event loss */
+	{
+		int rcvbuf = 1024 * 1024;
+		setsockopt(pfd.fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+	}
+
+	/* Run coldplug if requested */
+	if (do_coldplug)
+		coldplug();
+
+	logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
+
 	while (running) {
-		char *path = NULL;
-		int ac = 0;
-		int i, len;
+		int len;
 
 		if (-1 == poll(&pfd, 1, -1)) {
 			if (errno == EINTR)
 				continue;
-
 			break;
 		}
 
-		len = recv(pfd.fd, buf, sizeof(buf), MSG_DONTWAIT);
+		len = recv(pfd.fd, buf, sizeof(buf) - 1, MSG_DONTWAIT);
 		if (len == -1) {
 			switch (errno) {
 			case EINTR:
 				continue;
 			case ENOBUFS:
-				warn("lost events");
+				warn("lost events, buffer overflow");
 				continue;
 			default:
-				panic("unhandled");
+				panic("recv failed");
 				continue;
 			}
 		}
 		buf[len] = 0;
-		logit(LOG_DEBUG, "%s", buf);
 
-		/* skip libusb events, focus on kernel events/changes */
-		if (strncmp(buf, "change@", 7))
+		/* Skip libudev events (start with "libudev") */
+		if (!strncmp(buf, "libudev", 7))
 			continue;
 
-		/* XXX: currently limited to monitoring this subsystem */
-		if (!strstr(buf, "power_supply"))
-			continue;
-
-		i = 0;
-		while (i < len) {
-			char *line = buf + i;
-
-			logit(LOG_DEBUG, "%s", line);
-			if (!strncmp(line, "DEVPATH=", 8)) {
-				path = &line[8];
-				logit(LOG_DEBUG, "Got path %s", path);
-			} else if (!strncmp(line, "POWER_SUPPLY_TYPE=", 18)) {
-				ac = is_ac(&line[18]);
-			} else if (!strncmp(line, "POWER_SUPPLY_ONLINE=", 20) && ac) {
-				if (check_online(&line[20])) {
-					if (!num_ac_online)
-						sys_cond("pwr/ac", 1);
-					num_ac_online++;
-				} else {
-					if (num_ac_online > 0)
-						num_ac_online--;
-					if (!num_ac_online)
-						sys_cond("pwr/ac", 0);
-				}
-			}
-
-			i += strlen(line) + 1;
-		}
+		handle_uevent(buf, len);
 	}
+
 	close(pfd.fd);
+	logit(LOG_NOTICE, "keventd shutting down");
 
 	return 0;
 }

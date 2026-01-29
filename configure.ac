@@ -118,7 +118,7 @@ AC_PLUGIN([resolvconf],    [no],  [Setup necessary files for resolvconf])
 AC_PLUGIN([x11-common],    [no],  [Console setup (for X)])
 AC_PLUGIN([netlink],       [yes], [Basic netlink plugin for IFUP/IFDN and GW events. Can be replaced with externally built plugin that links with libnl or similar.])
 AC_PLUGIN([hook-scripts],  [no],  [Trigger script execution from hook points])
-AC_PLUGIN([hotplug],       [yes], [Start udevd or mdev kernel event datamon])
+AC_PLUGIN([hotplug],       [no],  [Start udevd or mdev kernel event datamon])
 AC_PLUGIN([rtc],           [yes], [Save and restore RTC using hwclock])
 AC_PLUGIN([tty],           [yes], [Automatically activate new TTYs, e.g. USB-to-serial])
 AC_PLUGIN([urandom],       [yes], [Setup and save random seed at boot/shutdown])
@@ -171,7 +171,7 @@ AC_ARG_WITH(random-seed,
 	[random_seed=$withval], [random_seed=yes])
 
 AC_ARG_WITH(keventd,
-        AS_HELP_STRING([--with-keventd], [Enable built-in keventd, default: no]),, [with_keventd=no])
+        AS_HELP_STRING([--with-keventd], [Enable built-in keventd device manager, default: yes]),, [with_keventd=yes])
 
 AC_ARG_WITH(sulogin,
         AS_HELP_STRING([--with-sulogin@<:@=USER@:>@], [Enable built-in sulogin, optional USER to request password for (default root), default: no.]),[sulogin=$withval],[with_sulogin=no])
