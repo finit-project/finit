@@ -13,6 +13,8 @@
 .Nm
 .Op Fl c
 .Op Fl d
+.Op Fl g Ar group
+.Op Fl G
 .Op Fl h
 .Op Fl n
 .Op Fl v
@@ -53,6 +55,21 @@ Enable debug mode.  Implies
 All received uevents are logged to stderr.
 .It Fl h
 Show help text and exit.
+.It Fl g Ar group
+Override the netlink multicast group mask used for uevent rebroadcast.
+The default is 4 (group 0x4), which is the
+.Sy libudev-zero
+convention.
+Bit 0 is always masked out to prevent a feedback loop with the kernel
+group.
+See
+.Sx NETLINK REBROADCAST
+below.
+.It Fl G
+Disable netlink uevent rebroadcast entirely.
+See
+.Sx NETLINK REBROADCAST
+below.
 .It Fl n
 Run in foreground, do not daemonize.  Log messages are written to
 stderr instead of syslog.
@@ -182,6 +199,40 @@ Useful for preventing power-hungry services from running on battery:
 .Bd -literal -offset indent
 service [2345] <sys/pwr/ac> cron -f -- Cron daemon
 .Ed
+.Sh NETLINK REBROADCAST
+The Linux kernel sends uevents to netlink multicast group 1 (bit 0) of
+.Dv NETLINK_KOBJECT_UEVENT .
+Only the device manager listens on this raw kernel group.  Userspace
+consumers such as applications using
+.Sy libudev
+expect to receive processed events on a separate netlink group.
+.Pp
+.Sy systemd/udevd
+established the convention of rebroadcasting to a separate group, and
+.Sy libudev-zero ,
+a daemonless replacement for libudev, listens on group 0x4 for these
+events.  Without rebroadcast, graphical applications, Wayland and X11
+compositors, libinput, and other libudev consumers will not receive
+device hotplug events.
+.Pp
+.Nm
+rebroadcasts by default to netlink group 4 (bit 2, i.e.\&
+.Li 0x4 ) .
+A second netlink socket is created at startup, and after each uevent
+has been fully processed (device nodes created, modules loaded,
+etc.\&), the original event is sent to the configured group.  This
+ensures that device nodes and symlinks already exist by the time
+consumers receive the event.
+.Pp
+Use
+.Fl g
+to override the default group mask, or
+.Fl G
+to disable rebroadcast entirely.
+.Pp
+See also:
+.Lk https://github.com/illiliti/libudev-zero "libudev-zero" ,
+.Lk https://skarnet.org/software/mdevd/ "mdevd" .
 .Sh SIGNALS
 .Bl -tag -width SIGUSR1
 .It Dv SIGUSR1

@@ -7,7 +7,9 @@ mdev, mdevd, or udevd on systems where a lighter-weight solution is
 preferred, particularly on embedded systems.
 
 It is enabled by default since Finit v5.  To disable it and use an
-external device manager instead: `./configure --without-keventd`
+external device manager instead:
+
+    ./configure --without-keventd
 
 
 Features
@@ -31,6 +33,8 @@ kernel events and handles:
   `sys/pwr/ac` condition
 - **Device conditions**: sets `dev/*` conditions in the Finit condition
   system when device nodes appear or disappear
+- **Netlink rebroadcast**: rebroadcasts processed uevents to netlink
+  group 0x4 for [libudev-zero][] consumers (enabled by default)
 
 
 Device Nodes
@@ -49,18 +53,18 @@ conditions are cleaned up.
 keventd applies permissions based on built-in rules that match on
 device subsystem and name:
 
-| Subsystem     | Pattern      | Mode   | Owner:Group    |
-|---------------|-------------|--------|----------------|
-| block         | sd*, vd*, nvme*, mmcblk*, loop*, dm-*, md* | 0660 | root:disk |
-| tty           | tty[0-9]*   | 0620   | root:tty       |
-| tty           | ttyS*, ttyUSB*, ttyACM* | 0660 | root:dialout |
-| input         | event*, mouse*, mice | 0660 | root:root |
-| sound         | *           | 0660   | root:audio     |
-| video4linux   | *           | 0660   | root:video     |
-| drm           | card*, render* | 0660 | root:video     |
-| (any)         | null, zero, full, random, urandom | 0666 | root:root |
-| (any)         | console     | 0600   | root:root      |
-| (default)     |             | 0660   | root:root      |
+| **Subsystem** | **Pattern**                                | **Mode** | **Owner:Group** |
+|---------------|--------------------------------------------|----------|-----------------|
+| block         | sd*, vd*, nvme*, mmcblk*, loop*, dm-*, md* | 0660     | root:disk       |
+| tty           | tty[0-9]*                                  | 0620     | root:tty        |
+| tty           | ttyS*, ttyUSB*, ttyACM*                    | 0660     | root:dialout    |
+| input         | event*, mouse*, mice                       | 0660     | root:root       |
+| sound         | *                                          | 0660     | root:audio      |
+| video4linux   | *                                          | 0660     | root:video      |
+| drm           | card*, render*                             | 0660     | root:video      |
+| (any)         | null, zero, full, random, urandom          | 0666     | root:root       |
+| (any)         | console                                    | 0600     | root:root       |
+| (default)     |                                            | 0660     | root:root       |
 
 
 Persistent Symlinks
@@ -122,6 +126,53 @@ kernel to re-emit add events for all existing devices.
 This replaces the separate `coldplug` script previously used with mdev.
 
 
+Netlink Rebroadcast
+-------------------
+
+The Linux kernel sends uevents to netlink multicast group 1 (bit 0) of
+`NETLINK_KOBJECT_UEVENT`.  Only the device manager listens on this raw
+kernel group.  Userspace consumers — applications using libudev —
+expect to receive processed events on a separate netlink group.
+
+systemd/udevd established the convention of rebroadcasting processed
+events to a separate group, and [libudev-zero][], a daemonless drop-in
+replacement for libudev, listens on group `0x4` for these events.
+Without a device manager rebroadcasting, graphical applications,
+Wayland/X11 compositors, libinput, and anything else using libudev to
+monitor device hotplug will never see any events.
+
+keventd rebroadcasts by default to netlink group 4 (`0x4`).  A second
+netlink socket is created at startup, and after each uevent has been
+fully processed (device nodes created, symlinks set up, modules loaded),
+the original raw event is sent to the configured group(s).
+Rebroadcasting after processing ensures that device nodes and symlinks
+already exist by the time consumers receive the notification.
+
+Use `-g GROUP` to override the default group mask, or `-G` to disable
+rebroadcast entirely.  Bit 0 of the group mask is always forced off to
+prevent a feedback loop with the kernel's own multicast group.
+
+### Background
+
+The netlink uevent architecture uses separate multicast groups to
+isolate the kernel-to-device-manager channel from the device-manager-to-
+application channel:
+
+| **Group** | **Bit** | **Purpose**                                 |
+|-----------|---------|---------------------------------------------|
+| 1         | 0       | Kernel events (device manager listens here) |
+| 4         | 2       | Processed events (libudev consumers listen) |
+
+This two-group design was established by systemd/udevd and is the de
+facto standard.  [mdevd][] implements the same mechanism via its `-O`
+flag, and keventd follows the same convention.
+
+For more details, see:
+
+- [libudev-zero][] — daemonless replacement for libudev
+- [mdevd][] — mdev-compatible device manager with rebroadcast support
+
+
 Conditions
 ----------
 
@@ -143,7 +194,7 @@ the dependent services.
 
 keventd monitors the `power_supply` subsystem and provides:
 
-- `sys/pwr/ac` -- asserted when AC power is connected
+- `sys/pwr/ac` — asserted when AC power is connected
 
 This is useful for preventing power-hungry services from running on
 battery:
@@ -154,11 +205,13 @@ battery:
 Usage
 -----
 
-    keventd [-cdhnv]
+    keventd [-cdGhnv] [-g GROUP]
 
     Options:
       -c        Run coldplug at startup
       -d        Enable debug mode (foreground, verbose)
+      -g GROUP  Override netlink rebroadcast group (default: 4)
+      -G        Disable netlink rebroadcast entirely
       -h        Show help text
       -n        Run in foreground (no daemon)
       -v        Show version
@@ -177,7 +230,7 @@ Integration with Finit
 
 keventd is a standalone daemon started by Finit as an internal service.
 It communicates with Finit exclusively through the filesystem-based
-condition system -- creating and removing symlinks in `/run/finit/cond/`.
+condition system — creating and removing symlinks in `/run/finit/cond/`.
 
 This means keventd can also be tested independently:
 
@@ -187,8 +240,14 @@ This means keventd can also be tested independently:
     # Run with coldplug to populate /dev from scratch
     keventd -c -n
 
+    # Run without rebroadcast (e.g., headless embedded system)
+    keventd -c -G
+
 When keventd is enabled, it conflicts with external device managers.
 Only one device manager should be active at a time.  The system
 configuration uses the `conflict:` directive to enforce this:
 
     service conflict:udevd,mdevd,mdev [...] keventd -c -- Finit device manager
+
+[libudev-zero]: https://github.com/illiliti/libudev-zero
+[mdevd]:        https://skarnet.org/software/mdevd/
