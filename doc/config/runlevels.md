@@ -125,8 +125,10 @@ Load kernel modules, each with optional arguments.  Similar to the
 Deprecated, there is both a `modules-load.so` and a `modprobe.so` plugin
 that can handle module loading better.  The former supports loading from
 `/etc/modules-load.d/`, the latter uses kernel modinfo to automatically
-load (or coldplug) every required module.  For hotplug we recommend the
-BusyBox mdev tool, add to `/etc/mdev.conf`:
+load (or coldplug) every required module.  Hotplug module loading is
+handled by [keventd](../keventd.md), the built-in device manager.  On
+systems using the hotplug plugin with BusyBox mdev instead, add to
+`/etc/mdev.conf`:
 
     $MODALIAS=.*  root:root       0660    @modprobe -b "$MODALIAS"
 
