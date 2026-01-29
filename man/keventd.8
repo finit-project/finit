@@ -1,0 +1,215 @@
+.\"                                      Hey, EMACS: -*- nroff -*-
+.\" First parameter, NAME, should be all caps
+.\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
+.\" other parameters are allowed: see man(7), man(1)
+.Dd Jan 29, 2026
+.\" Please adjust this date whenever revising the manpage.
+.Dt KEVENTD 8 SMM
+.Os Linux
+.Sh NAME
+.Nm keventd
+.Nd Finit device manager daemon
+.Sh SYNOPSIS
+.Nm
+.Op Fl c
+.Op Fl d
+.Op Fl h
+.Op Fl n
+.Op Fl v
+.Sh DESCRIPTION
+.Nm
+is a built-in device manager bundled with
+.Xr finit 8 .
+It listens for kernel uevents on a
+.Dv NETLINK_KOBJECT_UEVENT
+socket and handles device node creation, persistent symlinks, firmware
+loading, kernel module loading, and condition management.
+.Pp
+It replaces the need for external device managers like
+.Nm mdev ,
+.Nm mdevd ,
+or
+.Nm udevd
+on systems where a lighter-weight solution is preferred, particularly
+on embedded systems.
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl c
+Run coldplug at startup.  Walks the
+.Pa /sys/devices
+tree and writes
+.Cm add
+to each
+.Pa uevent
+file, causing the kernel to re-emit add events for all devices already
+present.  This populates
+.Pa /dev
+with nodes for hardware that existed before
+.Nm
+started.
+.It Fl d
+Enable debug mode.  Implies
+.Fl n .
+All received uevents are logged to stderr.
+.It Fl h
+Show help text and exit.
+.It Fl n
+Run in foreground, do not daemonize.  Log messages are written to
+stderr instead of syslog.
+.It Fl v
+Show version and exit.
+.El
+.Sh DEVICE NODES
+On receiving an
+.Cm add
+event with
+.Cm MAJOR ,
+.Cm MINOR ,
+and
+.Cm DEVNAME
+fields,
+.Nm
+creates the device node in
+.Pa /dev
+using
+.Xr mknod 2 .
+Parent directories are created as needed, e.g.\&
+.Pa /dev/input/
+for
+.Pa /dev/input/event0 .
+.Pp
+On
+.Cm remove
+events the device node and its associated symlinks are cleaned up.
+.Pp
+Permissions are assigned based on built-in rules matching on device
+subsystem and name.  For example, block devices default to mode 0660
+owned by root:disk, TTY devices to root:tty, and common devices like
+.Pa /dev/null
+and
+.Pa /dev/zero
+are world-readable (0666).
+.Sh PERSISTENT SYMLINKS
+For block devices,
+.Nm
+creates symlinks in
+.Pa /dev/disk/ :
+.Bl -tag -width by-path -offset indent -compact
+.It Pa by-id
+Based on device serial number and model, read from sysfs.
+.It Pa by-path
+Based on the device topology path.
+.El
+.Pp
+For input devices, symlinks are created in
+.Pa /dev/input/ :
+.Bl -tag -width by-path -offset indent -compact
+.It Pa by-id
+Based on the device name from sysfs.
+.It Pa by-path
+Based on the physical device path.
+.El
+.Pp
+Symlinks are tracked internally and automatically removed when the
+device is unplugged.
+.Sh FIRMWARE LOADING
+When a kernel driver requests firmware via
+.Fn request_firmware ,
+the kernel emits a uevent with a
+.Cm FIRMWARE
+field.
+.Nm
+handles this by searching for the firmware file in the following order:
+.Pp
+.Bl -enum -compact -offset indent
+.It
+.Pa /lib/firmware/updates/<kernel-version>/<name>
+.It
+.Pa /lib/firmware/updates/<name>
+.It
+.Pa /lib/firmware/<kernel-version>/<name>
+.It
+.Pa /lib/firmware/<name>
+.El
+.Pp
+The firmware is loaded by writing to the device's sysfs
+.Pa loading
+and
+.Pa data
+attributes.
+.Sh MODULE LOADING
+When a device add event includes a
+.Cm MODALIAS
+field,
+.Nm
+spawns
+.Cm modprobe -bq
+to load the matching kernel module.  Module loading is asynchronous
+to avoid blocking event processing.
+.Sh CONDITIONS
+.Nm
+provides conditions for Finit's dependency system by creating and
+removing symlinks in
+.Pa /run/finit/cond/ .
+.Ss Device Conditions
+When a device node is created,
+.Nm
+asserts a corresponding
+.Cm dev/
+condition.  For example, creating
+.Pa /dev/sda
+asserts
+.Cm dev/sda .
+This allows services to depend on specific devices:
+.Bd -literal -offset indent
+service [2345] <dev/sda> /usr/sbin/mdadm -- RAID monitor
+service [2345] <dev/ttyUSB0> /usr/sbin/gpsd -- GPS daemon
+.Ed
+.Pp
+When the device is removed, the condition is cleared and Finit stops
+the dependent services.
+.Ss Power Supply Conditions
+.Nm
+monitors the
+.Cm power_supply
+subsystem and provides:
+.Bl -tag -width sys/pwr/ac -offset indent -compact
+.It Cm sys/pwr/ac
+Asserted when AC power is connected.
+.El
+.Pp
+Useful for preventing power-hungry services from running on battery:
+.Bd -literal -offset indent
+service [2345] <sys/pwr/ac> cron -f -- Cron daemon
+.Ed
+.Sh SIGNALS
+.Bl -tag -width SIGUSR1
+.It Dv SIGUSR1
+Toggle debug logging at runtime.
+.It Dv SIGTERM
+Graceful shutdown.
+.El
+.Sh FILES
+.Bl -tag -width /run/finit/cond/dev/ -compact
+.It Pa /dev/
+Device nodes managed by
+.Nm .
+.It Pa /dev/disk/by-id/ , Pa /dev/disk/by-path/
+Persistent block device symlinks.
+.It Pa /dev/input/by-id/ , Pa /dev/input/by-path/
+Persistent input device symlinks.
+.It Pa /lib/firmware/
+Firmware search path.
+.It Pa /run/finit/cond/dev/
+Device condition symlinks.
+.It Pa /run/finit/cond/sys/pwr/
+Power supply condition symlinks.
+.El
+.Sh SEE ALSO
+.Xr finit 8 ,
+.Xr finit.conf 5 ,
+.Xr initctl 8 ,
+.Xr mknod 2 ,
+.Xr modprobe 8
+.Sh AUTHORS
+.An Joachim Wiberg Aq Mt troglobit@gmail.com
