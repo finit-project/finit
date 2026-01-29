@@ -30,7 +30,7 @@ getty_CFLAGS         = -W -Wall -Wextra -std=gnu99
 getty_CFLAGS        += $(lite_CFLAGS)
 getty_LDADD          = $(lite_LIBS)
 
-keventd_SOURCES      = keventd.c iwatch.c iwatch.h util.c util.h
+keventd_SOURCES      = keventd.c keventd.h uevent.c util.c util.h
 keventd_CFLAGS       = -W -Wall -Wextra -std=gnu99
 keventd_CFLAGS      += $(lite_CFLAGS)
 keventd_LDADD        = $(lite_LIBS)

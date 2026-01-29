@@ -164,7 +164,7 @@ AC_ARG_WITH(random-seed,
 	[random_seed=$withval], [random_seed=yes])
 
 AC_ARG_WITH(keventd,
-        AS_HELP_STRING([--with-keventd], [Enable built-in keventd, default: no]),, [with_keventd=no])
+        AS_HELP_STRING([--with-keventd], [Enable built-in keventd device manager, default: yes]),, [with_keventd=yes])
 
 AC_ARG_WITH(sulogin,
         AS_HELP_STRING([--with-sulogin@<:@=USER@:>@], [Enable built-in sulogin, optional USER to request password for (default root), default: no.]),[sulogin=$withval],[with_sulogin=no])
