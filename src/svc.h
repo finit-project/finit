@@ -139,6 +139,7 @@ typedef struct svc {
 	svc_type_t     type;	       /* Service, run, task, ... */
 	char           protect;        /* Services like dbus-daemon & udev by Finit */
 	char           manual;	       /* run/task that require `initctl start foo` */
+	char           remain;	       /* run/task: stay in DONE state, run post: on stop */
 	char           nowarn;	       /* Skip or log warning if cmd missing or conflicts */
 	const int      dirty;	       /* 0: unmodified, 1: modified */
 	const int      removed;
@@ -282,6 +283,7 @@ static inline int svc_is_tty       (svc_t *svc) { return svc && SVC_TYPE_TTY    
 static inline int svc_is_runtask   (svc_t *svc) { return svc && (SVC_TYPE_RUNTASK & svc->type);}
 static inline int svc_is_forking   (svc_t *svc) { return svc && svc->forking; }
 static inline int svc_is_manual    (svc_t *svc) { return svc && svc->manual; }
+static inline int svc_is_remain    (svc_t *svc) { return svc && svc->remain; }
 static inline int svc_is_noreload  (svc_t *svc) { return svc && (0 == svc->sighup && 0 == svc->reload_script[0]); }
 
 static inline int svc_in_runlevel  (svc_t *svc, int runlevel) { return svc && ISSET(svc->runlevels, runlevel); }

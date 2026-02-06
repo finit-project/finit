@@ -461,6 +461,9 @@ restart:
 		/* First reload all *.conf in /etc/finit.d/ */
 		conf_reload();
 
+		/* Handle remain tasks that need to run post script before restart */
+		service_runtask_clean();
+
 		/*
 		 * Then, mark all affected service conditions as in-flux and
 		 * let all affected services move to WAITING/HALTED

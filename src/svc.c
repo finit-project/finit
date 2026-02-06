@@ -344,6 +344,10 @@ svc_t *svc_stop_completed(void)
 	for (svc = svc_iterator(&iter, 1); svc; svc = svc_iterator(&iter, 0)) {
 		if (svc->state == SVC_STOPPING_STATE && svc->pid > 1)
 			return svc;
+
+		/* Also wait for remain tasks running their post script */
+		if (svc_is_remain(svc) && svc->state == SVC_TEARDOWN_STATE && svc->pid > 1)
+			return svc;
 	}
 
 	return NULL;
