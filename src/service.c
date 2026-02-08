@@ -1798,7 +1798,7 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 	char *dev = NULL;
 	int respawn = 0;
 	int levels = 0;
-	int forking = 0, manual = 0, nowarn = 0;
+	int forking = 0, manual = 0, remain = 0, nowarn = 0;
 	int restart_max = SVC_RESPAWN_MAX;
 	int restart_tmo = 0;
 	unsigned oncrash_action = SVC_ONCRASH_IGNORE;
@@ -1866,6 +1866,8 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 			forking = 1;
 		else if (MATCH_CMD(cmd, "manual:yes", arg))
 			manual = 1;
+		else if (MATCH_CMD(cmd, "remain:yes", arg))
+			remain = 1;
 		else if (MATCH_CMD(cmd, "restart:", arg)) {
 			if (MATCH_CMD(arg, "always", arg))
 				restart_max = -1;
@@ -2171,6 +2173,18 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 		memset(svc->ifstmt, 0, sizeof(svc->ifstmt));
 	svc->manual  = manual;
 	svc->nowarn  = nowarn;
+
+	/*
+	 * remain:yes is not supported for bootstrap-only tasks.  These
+	 * tasks are deleted immediately after completion and their post:
+	 * scripts never run.  This is by design.
+	 */
+	if (remain && svc_is_runtask(svc) && !ISOTHER(levels, INIT_LEVEL)) {
+		logit(LOG_WARNING, "%s: remain:yes ignored for bootstrap-only tasks",
+		      svc_ident(svc, NULL, 0));
+		remain = 0;
+	}
+	svc->remain  = remain;
 	svc->respawn = respawn;
 	svc->forking = forking;
 	svc->restart_max = restart_max;
@@ -2859,8 +2873,12 @@ restart:
 			if (svc_is_removed(svc) && svc_has_cleanup(svc)) {
 				svc_set_state(svc, SVC_CLEANUP_STATE);
 				service_cleanup_script(svc);
-			} else
+			} else {
+				/* Unblock remain tasks after post script so they can restart */
+				if (svc_is_remain(svc))
+					svc_unblock(svc);
 				svc_set_state(svc, SVC_HALTED_STATE);
+			}
 		}
 		break;
 
@@ -2876,9 +2894,16 @@ restart:
 		break;
 
 	case SVC_DONE_STATE:
-		if (svc_is_changed(svc))
+		/* Remain tasks: always run post script when stopped, even if config changed */
+		if (svc_is_runtask(svc) && svc_is_remain(svc) && svc_is_stopped(svc)) {
+			if (svc_has_post(svc)) {
+				svc_set_state(svc, SVC_TEARDOWN_STATE);
+				service_post_script(svc);
+			} else
+				svc_set_state(svc, SVC_HALTED_STATE);
+		} else if (svc_is_changed(svc))
 			svc_set_state(svc, SVC_HALTED_STATE);
-		if (svc_is_runtask(svc) && svc_is_manual(svc) && enabled)
+		else if (svc_is_runtask(svc) && svc_is_manual(svc) && enabled)
 			svc_set_state(svc, SVC_WAITING_STATE);
 		break;
 
@@ -3178,6 +3203,29 @@ void service_runtask_clean(void)
 
 	for (svc = svc_iterator(&iter, 1); svc; svc = svc_iterator(&iter, 0)) {
 		if (!svc_is_runtask(svc))
+			continue;
+
+		/* Remain tasks stay in DONE state if still valid in new runlevel */
+		if (svc_is_remain(svc) && svc->state == SVC_DONE_STATE) {
+			if (svc_in_runlevel(svc, runlevel) && !svc_is_changed(svc))
+				continue;	/* Keep once flag, stay in DONE */
+
+			/* Config changed or leaving runlevel: stop, run post, restart */
+			svc->once = 0;
+			svc_stop(svc);
+			service_step(svc);
+			continue;
+		}
+
+		/*
+		 * On reload (SIGHUP), only remain tasks (handled above) should
+		 * have their once flag cleared and be restarted.  Regular run/task
+		 * that already ran in this runlevel must not run again.
+		 *
+		 * On runlevel change, continue below to reset once flag so tasks
+		 * can run again in the new runlevel.
+		 */
+		if (sm_in_reload())
 			continue;
 
 		/* run/task declared with <!> */

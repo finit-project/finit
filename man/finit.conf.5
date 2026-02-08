@@ -398,6 +398,20 @@ mechanism completely, allows endless restarts.  Useful in many
 use-cases, but not what
 .Cm service
 was originally designed for so not the default behavior.
+.It Cm remain:yes
+for
+.Cm run
+and
+.Cm task
+only.  Prevents the task from re-running on runlevel re-entry and
+ensures the
+.Cm post:
+script runs when the task is explicitly stopped or leaves its valid
+runlevels.  Similar to systemd's
+.Cm RemainAfterExit=yes .
+.Pp
+.Sy Note:
+not supported for bootstrap-only tasks (runlevels [S] only).
 .It Cm oncrash:reboot
 when all retries have failed, and the service
 has

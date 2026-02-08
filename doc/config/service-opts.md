@@ -69,6 +69,11 @@ confines of that the following options are available:
   * `respawn` -- bypasses the `restart` mechanism completely, allows
     endless restarts.  Useful in many use-cases, but not what `service`
     was originally designed for so not the default behavior
+  * `remain:yes` -- for `run` and `task` only.  Prevents the task from
+    re-running on runlevel re-entry and ensures the `post:` script runs
+    when the task is explicitly stopped or leaves its valid runlevels.
+    Similar to systemd's `RemainAfterExit=yes`.  See [Task and Run](task-and-run.md)
+    for more details
   * `oncrash:reboot` -- when all retries have failed, and the service
     has *crashed*, if this option is set the system is rebooted
   * `oncrash:script` -- similarly, but instead of rebooting, call the
