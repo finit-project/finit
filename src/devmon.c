@@ -107,7 +107,7 @@ void devmon_add_cond(const char *cond)
 
 void devmon_del_cond(const char *cond)
 {
-	if (!cond || strcmp(cond, "dev/"))
+	if (!cond || strncmp(cond, COND_DEV, strlen(COND_DEV)))
 		return;
 
 	drop_node(find_node(cond));
