@@ -32,6 +32,7 @@
 #include "cgroup.h"
 #include "cond.h"
 #include "conf.h"
+#include "devmon.h"
 #include "log.h"
 #include "helpers.h"
 #include "private.h"
@@ -514,6 +515,9 @@ restart:
 
 		dbg("Calling reconf hooks ...");
 		plugin_run_hooks(HOOK_SVC_RECONF);
+
+		dbg("Update configuration generation of device conditions ...");
+		devmon_reconf();
 
 		dbg("Update configuration generation of unmodified non-native services ...");
 		service_notify_reconf();

@@ -113,6 +113,20 @@ void devmon_del_cond(const char *cond)
 	drop_node(find_node(cond));
 }
 
+void devmon_reconf(void)
+{
+	struct dev_node *node, *tmp;
+	char path[PATH_MAX];
+
+	TAILQ_FOREACH_SAFE(node, &dev_node_list, link, tmp) {
+		snprintf(path, sizeof(path), "/%s", node->name);
+		if (fexist(path))
+			cond_set(node->name);
+		else
+			cond_clear(node->name);
+	}
+}
+
 static int devmon_add_path(struct iwatch *iw, char *path)
 {
 	char *ptr;

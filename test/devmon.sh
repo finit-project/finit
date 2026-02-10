@@ -42,6 +42,11 @@ test_one()
 
     mkdev "$node"
     assert_status "serv" "running"
+    assert_cond "$cond"
+
+    run "initctl reload"
+    assert_status "serv" "running"
+    assert_cond "$cond"
 
     rmdev "$node"
     assert_status "serv" "waiting"

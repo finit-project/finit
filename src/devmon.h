@@ -27,6 +27,7 @@
 void devmon_add_cond(const char *cond);
 void devmon_del_cond(const char *cond);
 
+void devmon_reconf(void);
 void devmon_init(uev_ctx_t *ctx);
 
 #endif /* FINIT_DEVMON_H_ */
