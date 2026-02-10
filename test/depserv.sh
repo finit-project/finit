@@ -5,6 +5,7 @@
 #   - bar must not start until foo is ready
 #   - bar must be stopped when foo goes down
 #   - bar must be restarted when foo is restarted
+#   - bar must be restarted when foo is reloaded (per-service reload)
 #
 # Regression test bug #314, that bar is not in a restart loop when foo
 # is stopped.  Also, verify that changing between runlevels, where foo
@@ -49,6 +50,13 @@ test_one()
     run "initctl status"
     assert "bar is restarted" "$(texec initctl |grep bar | awk '{print $1;}')" != "$pid"
 
+    say "Verify bar is restarted when foo is reloaded (per-service) ..."
+    retry 'assert_status "bar" "running"' 5 1
+    pid=$(texec initctl |grep bar | awk '{print $1;}')
+    run "initctl reload foo"
+    retry 'assert_status "bar" "running"' 5 1
+    assert "bar is restarted on reload" "$(texec initctl |grep bar | awk '{print $1;}')" != "$pid"
+
     # Wait for spice to be stolen by the Harkonnen
     sleep 3
     # bar should now have detected the loss of spice and be in restart
@@ -61,8 +69,9 @@ test_one()
     assert_status "bar" "waiting"
 }
 
+run "initctl debug"
 sep
 test_one "pid/foo"
 sep
-run "initctl debug"
-test_one "service/foo/running"
+#run "initctl debug"
+test_one "service/foo/ready"

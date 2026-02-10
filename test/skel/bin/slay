@@ -52,4 +52,4 @@ done
 echo "$pid" > /tmp/oldpid
 
 #echo "PID $pid, kill -9 ..."
-kill -9 "$pid"
+kill -9 "$pid" 2>/dev/null || true

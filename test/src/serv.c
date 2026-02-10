@@ -325,6 +325,12 @@ int main(int argc, char *argv[])
 #endif
 				}
 			}
+
+			if (melange) {
+				mine(melange);
+				vanish = -2;
+			}
+
 			if (do_pidfile > 0)
 				pidfile(NULL);
 			reloading = 0;

@@ -112,6 +112,8 @@ static int restart(svc_t *svc, void *user_data)
 
 static int reload(svc_t *svc, void *user_data)
 {
+	char cond[MAX_COND_LEN];
+
 	(void)user_data;
 
 	if (!svc)
@@ -121,6 +123,20 @@ static int reload(svc_t *svc, void *user_data)
 		svc_start(svc);
 	else
 		service_timeout_cancel(svc);
+
+	/*
+	 * Clear conditions before reload to ensure dependent services
+	 * are properly updated.  The conditions are reasserted when
+	 * the service touches its PID file after processing SIGHUP.
+	 *
+	 * Note: only clear 'ready' for services where the pidfile
+	 * inotify handler reasserts it (pid/none).  For s6/systemd
+	 * services readiness relies on their respective notification
+	 * mechanism which may not re-trigger on SIGHUP.
+	 */
+	cond_clear(mkcond(svc, cond, sizeof(cond)));
+	if (svc->notify == SVC_NOTIFY_PID || svc->notify == SVC_NOTIFY_NONE)
+		service_ready(svc, 0);
 
 	svc_mark_dirty(svc);
 	service_step(svc);
