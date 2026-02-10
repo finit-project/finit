@@ -194,6 +194,10 @@ When Finit configuration files are changed and the `initctl reload`
 command is called, it is expected of services to touch their PID files
 for Finit to reassert their conditions.
 
+Similarly, when a single service is reloaded with `initctl reload NAME`,
+its conditions are cleared and reasserted, ensuring dependent services
+are properly updated.
+
 Daemons that don't create PID files, or fail to touch them on reload,
 can be worked around by using the `pid:/path/to/file.pid` syntax in
 the service stanza for the daemon.  It is far from optimal since any
