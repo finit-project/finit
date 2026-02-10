@@ -14,6 +14,10 @@ All relevant changes are documented in this file.
 - Set USER and LOGNAME environment variables when dropping privileges.
   Fixes issues with software like rootless Podman that determines user
   identity from environment variables, by Aaron Andersen
+- Add `remain:yes` option for run/task oneshot commands, similar to the
+  systemd `RemainAfterExit=yes`, by Aaron Andersen
+- Clear service conditions on `initctl reload NAME` to ensure dependent
+  services are properly updated
 
 ### Fixes
 - Fix #464: invalid user:group examples in cgroups.md
