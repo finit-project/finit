@@ -1093,6 +1093,7 @@ static void service_notify_stop(svc_t *svc)
  */
 static void service_cleanup(svc_t *svc)
 {
+	char cond[MAX_COND_LEN];
 	char *fn;
 
 	/* PID collected, cancel any pending SIGKILL */
@@ -1102,6 +1103,18 @@ static void service_cleanup(svc_t *svc)
 	if (fn && remove(fn) && errno != ENOENT)
 		logit(LOG_CRIT, "Failed removing service %s pidfile %s",
 		      svc_ident(svc, NULL, 0), fn);
+
+	/*
+	 * Invalidate the pid/ condition for this service to ensure
+	 * dependent services are properly stopped and restarted.
+	 * Without this, the condition is only cleared asynchronously
+	 * via inotify on pidfile removal, which may not trigger when
+	 * the daemon fails to clean up its own pidfile, or when the
+	 * service dies during a reload cycle and goes directly from
+	 * RUNNING to HALTED (skipping STOPPING where cond_clear()
+	 * is normally called).
+	 */
+	cond_clear(mkcond(svc, cond, sizeof(cond)));
 
 	service_notify_stop(svc);
 
