@@ -3154,7 +3154,7 @@ restart:
 
 					mkcond(svc, name, sizeof(name));
 					dbg("Reassert condition %s", name);
-					cond_set_path(cond_path(name), COND_ON);
+					cond_set(name);
 				}
 
 				dbg("Reassert %s ready condition", svc_ident(svc, NULL, 0));
