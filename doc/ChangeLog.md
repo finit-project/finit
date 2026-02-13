@@ -25,6 +25,8 @@ All relevant changes are documented in this file.
 - Fix #467: TTY services stuck in restart state after non-zero exit.
   Throttling logic introduced in v4.15 had duplicate checks causing
   infinite timer loop, and TTYs lacked default restart timeout
+- Fix #475: Clear pid condition on service collection to fix stale deps
+- Fix #476: Fix PAUSED → RUNNING not stepping dependent services
 - Fix handling of already-mounted cgroups in `cgroup_init()`, can occur
   after switch_root or in container environments
 - Improve cgroups documentation clarity, grammar, and examples
