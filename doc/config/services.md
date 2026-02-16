@@ -47,6 +47,14 @@ waits for another service, `zebra`, to have created its PID file in
 *all* files in `/var/run`, for each file named `*.pid`, or `*/pid`,
 Finit opens it and find the matching `NAME:ID` using the PID.
 
+The condition can be prefixed with `!` and/or `~`:
+
+ - `<!pid/zebra>` -- `ospfd` does not support `SIGHUP` (noreload)
+ - `<~pid/zebra>` -- propagate reload from `zebra` to `ospfd`
+ - `<!~pid/zebra>` -- both: noreload and propagate reload
+
+For details, see the [Finit Conditions](../conditions.md) document.
+
 Some services do not maintain a PID file and rather than patching each
 application Finit provides a workaround.  A `pid` keyword can be set
 to have Finit automatically create (when starting) and later remove

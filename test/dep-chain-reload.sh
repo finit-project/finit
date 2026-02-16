@@ -4,17 +4,18 @@
 # Four services in a chain: A → B → C → D, all using notify:pid.
 # B and C are placed in separate sub-config files so we can use
 # 'initctl touch' on them independently.  B supports SIGHUP (reload),
-# while C and D use the '!' condition prefix (noreload), matching
-# a common pattern in real-world setups (e.g., FRR daemons on Infix).
+# while C and D use '!' (noreload) and '~' (propagate reload),
+# matching a common pattern in real-world setups (e.g., FRR routing
+# daemons on Infix OS).
 #
-# Chain: A ← B <pid/A> ← C <!pid/B> ← D <!pid/C>
+# Chain: A ← B <pid/A> ← C <!~pid/B> ← D <!~pid/C>
 #
 # Test 1 - touch C + reload (the "Infix" scenario):
 #   C is in the middle of the chain.  After 'initctl touch svc_c.conf'
 #   + 'initctl reload':
 #     - A and B should be unaffected (same PID)
 #     - C is stopped/started (config was touched, noreload)
-#     - D must be restarted (reverse dep of C)
+#     - D must be restarted (reload propagated from C)
 #
 # Test 2 - crash (kill -9):
 #   When B is killed with SIGKILL the crash path (RUNNING → HALTED)
@@ -26,7 +27,7 @@
 #   svc_b.conf' + 'initctl reload':
 #     - A should be unaffected (same PID)
 #     - B is SIGHUP'd (same PID, config was touched)
-#     - C and D must be restarted (transitive reverse deps)
+#     - C and D must be restarted (reload propagated, '~' prefix)
 
 set -eu
 
@@ -47,13 +48,13 @@ test_setup()
 {
     run "cat >> $FINIT_CONF" <<EOF
 service log:stdout notify:pid               name:svc_a serv -np -i svc_a -- Chain root
-service log:stdout notify:pid <!pid/svc_c>  name:svc_d serv -np -i svc_d -- Needs C
+service log:stdout notify:pid <!~pid/svc_c>  name:svc_d serv -np -i svc_d -- Needs C
 EOF
     run "cat >> $FINIT_RCSD/svc_b.conf" <<EOF
-service log:stdout notify:pid <pid/svc_a>   name:svc_b serv -np -i svc_b -- Needs A
+service log:stdout notify:pid <pid/svc_a>    name:svc_b serv -np -i svc_b -- Needs A
 EOF
     run "cat >> $FINIT_RCSD/svc_c.conf" <<EOF
-service log:stdout notify:pid <!pid/svc_b>  name:svc_c serv -np -i svc_c -- Needs B
+service log:stdout notify:pid <!~pid/svc_b>  name:svc_c serv -np -i svc_c -- Needs B
 EOF
 }
 
