@@ -14,11 +14,11 @@ specified separated by comma.  Multiple conditions are logically AND'ed
 during evaluation, i.e. all conditions must be satisfied in order for a
 service to run.
 
-A special syntax, using a leading `!` in run/task/service conditions,
-denote if a:
+Two special prefixes can be used inside the angle brackets:
 
- - service does not support `SIGHUP`
- - run/task should not block runlevel changes (i.e., bootstrap)
+ - `!` -- service does not support `SIGHUP` (noreload), or run/task
+   should not block runlevel changes (i.e., bootstrap)
+ - `~` -- propagate reload from this dependency, see below
 
 Finit guarantees by default that all run/tasks run (at least) once
 per runlevel.  For most tasks this is a good default, for example
@@ -51,6 +51,30 @@ own task to act on it.  We do not want this task to block Finit from
 moving to the next runlevel after bootstrap, so we set `<!>`:
 
     task [S0123456789] <!sys/pwr/fail> name:pwrfail initctl poweroff -- Power failure, shutting down
+
+
+Propagating Reload in Dependencies
+-----------------------------------
+
+By default, when a service reloads during `initctl reload`, dependent
+services are paused (`SIGSTOP`) and simply resumed (`SIGCONT`) when the
+condition is reasserted.  This is correct for barrier-style dependencies
+like `<pid/syslogd>`, where dependents just need syslogd running and do
+not care if it reloads its config.
+
+For services that need to react when their upstream reloads, the `~`
+prefix propagates the reload from the dependency:
+
+    service <pid/svc_a>   name:svc_b /sbin/svc_b -- Needs A (barrier)
+    service <!~pid/svc_b> name:svc_c /sbin/svc_c -- Propagate reload from B
+
+Here, `<~pid/svc_b>` means: propagate a reload of `svc_b` to `svc_c`.
+When `svc_b` reloads, `svc_c` will be restarted (because of `!`,
+noreload) instead of merely resumed.  If `svc_c` supported `SIGHUP`
+(no `!` prefix), it would be sent `SIGHUP` instead.
+
+This is similar to systemd's `PropagatesReloadTo=` directive, but
+declared on the consumer side rather than the provider side.
 
 
 Triggering
@@ -280,6 +304,11 @@ service will then be stopped, otherwise no further action is taken.
 This STOP/CONT handling minimizes the number of unnecessary service
 restarts that would otherwise occur because a depending service was sent
 `SIGHUP` for example.
+
+Services with the `~` prefix are an exception to this rule: when their
+conditions return to `on` after being in `flux`, the reload is propagated
+-- the service is reloaded (SIGHUP) or restarted (noreload `!`) instead
+of simply being resumed.
 
 Therefore, any plugin that supplies Finit with conditions must ensure
 that their state is updated after each reconfiguration.  This can be

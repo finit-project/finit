@@ -3146,6 +3146,20 @@ restart:
 		switch (cond) {
 		case COND_ON:
 			kill(svc->pid, SIGCONT);
+
+			/*
+			 * Propagate reload (~): upstream reloaded, so
+			 * we must also reload/restart, not just resume.
+			 */
+			if (svc->flux_reload && !svc_is_changed(svc)) {
+				svc_set_state(svc, SVC_RUNNING_STATE);
+				if (svc_is_noreload(svc))
+					service_stop(svc);
+				else
+					service_reload(svc);
+				break;
+			}
+
 			svc_set_state(svc, SVC_RUNNING_STATE);
 			/* Reassert condition if we go from waiting and no change */
 			if (!svc_is_changed(svc)) {
