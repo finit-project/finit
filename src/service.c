@@ -1153,7 +1153,7 @@ int service_stop(svc_t *svc)
 	service_timeout_cancel(svc);
 
 	if (svc->stop_script[0]) {
-		logit(LOG_CONSOLE | LOG_NOTICE, "%s[%d], calling stop:%s ...", id, svc->pid, svc->stop_script);
+		logit(LOG_CONSOLE | LOG_NOTICE, "Stopping %s[%d], calling stop:%s ...", id, svc->pid, svc->stop_script);
 	} else if (!svc_is_sysv(svc)) {
 		char *nm = pid_get_name(svc->pid, NULL, 0);
 		const char *sig = sig_name(svc->sighalt);
@@ -1168,10 +1168,10 @@ int service_stop(svc_t *svc)
 		}
 
 		dbg("Sending %s to pid:%d name:%s(%s)", sig, svc->pid, id, nm);
-		logit(LOG_CONSOLE | LOG_NOTICE, "%s[%d], stopping, sending %s ...", id, svc->pid, sig);
+		logit(LOG_CONSOLE | LOG_NOTICE, "Stopping %s[%d], sending %s ...", id, svc->pid, sig);
 	} else {
 		compose_cmdline(svc, cmdline, sizeof(cmdline));
-		logit(LOG_CONSOLE | LOG_NOTICE, "%s[%d], calling '%s stop' ...", id, svc->pid, cmdline);
+		logit(LOG_CONSOLE | LOG_NOTICE, "Stopping %s[%d], calling '%s stop' ...", id, svc->pid, cmdline);
 	}
 
 	/*
@@ -1291,7 +1291,7 @@ static int service_reload(svc_t *svc)
 		print_desc("Restarting ", svc->desc);
 
 	if (svc->reload_script[0]) {
-		logit(LOG_CONSOLE | LOG_NOTICE, "%s[%d], calling reload:%s ...", id, svc->pid, svc->reload_script);
+		logit(LOG_CONSOLE | LOG_NOTICE, "Reloading %s[%d], calling reload:%s ...", id, svc->pid, svc->reload_script);
 		rc = service_run_script(svc, svc->reload_script);
 	} else 	if (svc->sighup) {
 		if (svc->pid <= 1) {
@@ -1299,8 +1299,8 @@ static int service_reload(svc_t *svc)
 			svc->start_time = svc->pid = 0;
 			goto done;
 		}
-		dbg("%s[%d], sending SIGHUP", id, svc->pid);
-		logit(LOG_CONSOLE | LOG_NOTICE, "%s[%d], sending SIGHUP ...", id, svc->pid);
+		dbg("Reloading %s[%d], sending SIGHUP", id, svc->pid);
+		logit(LOG_CONSOLE | LOG_NOTICE, "Reloading %s[%d], sending SIGHUP ...", id, svc->pid);
 		rc = kill(svc->pid, SIGHUP);
 		if (rc == -1 && (errno == ESRCH || errno == ENOENT)) {
 			/* nobody home, reset internal state machine */
