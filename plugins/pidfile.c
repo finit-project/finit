@@ -59,7 +59,7 @@ static int pidfile_add_path(struct iwatch *iw, char *path)
 		}
 	}
 
-	return iwatch_add(iw, path, IN_ONLYDIR | IN_CLOSE_WRITE);
+	return iwatch_add(iw, path, IN_ONLYDIR | IN_CLOSE_WRITE | IN_ATTRIB);
 }
 
 static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
@@ -276,6 +276,7 @@ static void pidfile_reconf(void *arg)
 		if (cond_get(cond) == COND_ON)
 			continue;
 
+		dbg("Reassert condition %s", cond);
 		cond_set_path(cond_path(cond), COND_ON);
 	}
 

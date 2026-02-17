@@ -18,6 +18,11 @@ All relevant changes are documented in this file.
   systemd `RemainAfterExit=yes`, by Aaron Andersen
 - Clear service conditions on `initctl reload NAME` to ensure dependent
   services are properly updated
+- Add `~` condition prefix to propagate reload from a dependency to the
+  dependent service.  E.g., `<!~pid/netd>` means not only a regular
+  condition, but when `netd` reloads, restart this service too.  Similar
+  to systemd's directive `PropagatesReloadTo=`, but declared on the
+  consumer side.  Issue #416
 
 ### Fixes
 - Fix #464: invalid user:group examples in cgroups.md
@@ -25,6 +30,14 @@ All relevant changes are documented in this file.
 - Fix #467: TTY services stuck in restart state after non-zero exit.
   Throttling logic introduced in v4.15 had duplicate checks causing
   infinite timer loop, and TTYs lacked default restart timeout
+- Fix #475: clear pid condition on service collection to fix stale
+  deps.  When a service crashes (SIGKILL), the RUNNING → HALTED path
+  bypasses STOPPING where `cond_clear()` is normally called, leaving
+  dependents stuck
+- Fix #476: dependents not restarted after SIGHUP reload of service in
+  dependency chain.  Add `service_step_all()` at end of reload cycle to
+  guarantee convergence after conditions are reasserted.  See also the
+  new `~` condition prefix (above) to propagate reload to dependents
 - Fix handling of already-mounted cgroups in `cgroup_init()`, can occur
   after switch_root or in container environments
 - Improve cgroups documentation clarity, grammar, and examples

@@ -146,6 +146,7 @@ typedef struct svc {
 	int            starting;       /* ... waiting for pidfile to be re-asserted */
 	int	       runlevels;
 	int            sighup;	       /* This service supports SIGHUP :) */
+	int            flux_reload;    /* Propagate reload from dependency, '~' prefix */
 	int	       forking;	       /* This is a service/sysv daemon that forks, wait for it ... */
 	svc_block_t    block;	       /* Reason that this service is currently stopped */
 	char           cond[MAX_COND_LEN];

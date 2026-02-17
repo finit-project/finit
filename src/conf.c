@@ -745,8 +745,21 @@ void conf_parse_cond(svc_t *svc, char *cond)
 		return;
 	}
 
+	/*
+	 * The '~' prefix means a reload of the upstream service is
+	 * propagated to this service -- it will be reloaded (SIGHUP)
+	 * or restarted (noreload), not just paused and resumed.
+	 * Syntax: <!~pid/foo,~pid/bar> or <~pid/foo>
+	 *
+	 * Strip '~' from each condition and set the service-level
+	 * flag.  This allows '~' on any condition in the list.
+	 */
 	svc->cond[0] = 0;
 	for (i = 0, c = strtok(ptr, ","); c; c = strtok(NULL, ","), i++) {
+		if (c[0] == '~') {
+			c++;
+			svc->flux_reload = 1;
+		}
 		devmon_add_cond(c);
 		if (i)
 			strlcat(svc->cond, ",", sizeof(svc->cond));

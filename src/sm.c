@@ -510,14 +510,26 @@ restart:
 		/* Cleanup stale services */
 		svc_clean_dynamic(service_unregister);
 
+		dbg("Step all services waiting for reasserted conditions ...");
+		service_step_all(SVC_TYPE_ANY);
+
 		dbg("Calling reconf hooks ...");
 		plugin_run_hooks(HOOK_SVC_RECONF);
+
+		dbg("Step all services waiting for reasserted conditions ...");
+		service_step_all(SVC_TYPE_ANY);
 
 		dbg("Update configuration generation of device conditions ...");
 		devmon_reconf();
 
+		dbg("Step all services waiting for reasserted conditions ...");
+		service_step_all(SVC_TYPE_ANY);
+
 		dbg("Update configuration generation of unmodified non-native services ...");
 		service_notify_reconf();
+
+		dbg("Step all services waiting for reasserted conditions ...");
+		service_step_all(SVC_TYPE_ANY);
 
 		dbg("Reconfiguration done");
 		sm.state = SM_RUNNING_STATE;
