@@ -190,7 +190,8 @@ int cgroup_move_pid(const char *group, const char *name, int pid, int delegate)
 		}
 
 		if (rc) {
-			warn("Failed moving pid %d to cgroup %s", pid, path);
+			if (errno != ESRCH)
+				warn("Failed moving pid %d to cgroup %s", pid, path);
 			return -1;
 		}
 	}
@@ -379,7 +380,8 @@ static int cgroup_leaf_init(const char *group, const char *name, int pid, const 
 	if (!strcmp(group, "root"))
 		return fnwrite(str("%d", pid), FINIT_CGPATH "/cgroup.procs");
 
-	if (cgroup_move_pid(group, name, pid, delegate))
+	/* Error if error is not "No such process" */
+	if (cgroup_move_pid(group, name, pid, delegate) && errno != ESRCH)
 		err(1, "Failed moving pid %d to group %s/%s", pid, group, name);
 
 	/* Set up inotify watch for cgroup cleanup */
