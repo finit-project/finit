@@ -1031,7 +1031,6 @@ static int service_run_script(svc_t *svc, char *script)
 {
 	const char *id = svc_ident(svc, NULL, 0);
 	pid_t pid = service_fork(svc);
-	int status, rc;
 
 	if (pid < 0) {
 		err(1, "%s: failed forking off script %s", id, script);
@@ -1047,6 +1046,8 @@ static int service_run_script(svc_t *svc, char *script)
 		};
 		char pidbuf[16];
 
+		redirect(svc);
+
 		snprintf(pidbuf, sizeof(pidbuf), "%d", svc->pid);
 		setenv("MAINPID", pidbuf, 1);
 
@@ -1056,23 +1057,7 @@ static int service_run_script(svc_t *svc, char *script)
 	}
 
 	dbg("%s: script '%s' started as PID %d", id, script, pid);
-	if (waitpid(pid, &status, 0) == -1) {
-		warn("%s: failed calling script %s", id, script);
-		return -1;
-	}
-
-	rc = WEXITSTATUS(status);
-	if (WIFEXITED(status)) {
-		dbg("%s: script '%s' exited without signal, status: %d", id, script, rc);
-	} else if (WIFSIGNALED(status)) {
-		dbg("%s: script '%s' terminated by signal %d", id, script, WTERMSIG(status));
-		if (!rc)
-			rc = 1;
-	} else {
-		dbg("%s: script '%s' exited with status: %d", id, script, rc);
-	}
-
-	return rc;
+	return service_script_add(svc, pid, svc->killdelay);
 }
 
 /* Ensure we don't have any notify socket lingering */
