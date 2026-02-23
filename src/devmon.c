@@ -75,6 +75,7 @@ static void drop_node(struct dev_node *node)
 void devmon_add_cond(const char *cond)
 {
 	struct dev_node *node;
+	char path[PATH_MAX];
 
 	if (!cond || strncmp(cond, "dev/", 4)) {
 //		dbg("no match %s", cond ?: "<NIL>");
@@ -103,6 +104,10 @@ void devmon_add_cond(const char *cond)
 	node->refcnt = 1;
 
 	TAILQ_INSERT_TAIL(&dev_node_list, node, link);
+
+	snprintf(path, sizeof(path), "/%s", cond);
+	if (fexist(path))
+		cond_set(cond);
 }
 
 void devmon_del_cond(const char *cond)
