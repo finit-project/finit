@@ -1,4 +1,4 @@
-AC_INIT([Finit], [4.16-beta1], [https://github.com/finit-project/finit/issues],
+AC_INIT([Finit], [4.16-rc1], [https://github.com/finit-project/finit/issues],
 	[finit], [https://http://finit-project.github.io/])
 AC_CONFIG_AUX_DIR(aux)
 AM_INIT_AUTOMAKE([1.11 foreign subdir-objects])

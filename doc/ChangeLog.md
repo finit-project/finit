@@ -3,7 +3,7 @@ Change Log
 
 All relevant changes are documented in this file.
 
-[4.16][UNRELEASED] - Unreleased
+[4.16][] - 2026-02-28
 ---------------------
 
 ### Changes
@@ -26,6 +26,8 @@ All relevant changes are documented in this file.
   condition, but when `netd` reloads, restart this service too.  Similar
   to systemd's directive `PropagatesReloadTo=`, but declared on the
   consumer side.  Issue #416
+- `tmpfiles`: add support for `-E` and `--exclude-prefix` flags
+  contributed by Aaron Andersen
 
 ### Fixes
 - Fix #464: invalid user:group examples in cgroups.md
@@ -41,6 +43,8 @@ All relevant changes are documented in this file.
   dependency chain.  Add `service_step_all()` at end of reload cycle to
   guarantee convergence after conditions are reasserted.  See also the
   new `~` condition prefix (above) to propagate reload to dependents
+- Fix #478: fix `<dev/foo>` conditions at boot, conditions that exist
+  before inotify was set up.  Found and fixed by Mattias Walström
 - Fix reload of SIGHUP-capable services incorrectly disrupting their
   dependents.  E.g., `initctl reload syslogd` would stop dbus, dnsmasq,
   etc. even though syslogd handles SIGHUP gracefully and its PID persists
