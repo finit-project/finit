@@ -50,6 +50,26 @@ int create_flag = 0;
 int clean_flag = 0;
 int remove_flag = 0;
 
+#define MAX_EXCLUDES 32
+static const char *exclude_prefixes[MAX_EXCLUDES];
+static int num_excludes;
+
+static void add_exclude_prefix(const char *prefix)
+{
+	if (num_excludes < MAX_EXCLUDES)
+		exclude_prefixes[num_excludes++] = prefix;
+}
+
+static int excluded(const char *path)
+{
+	for (int i = 0; i < num_excludes; i++) {
+		if (!strncmp(path, exclude_prefixes[i], strlen(exclude_prefixes[i])))
+			return 1;
+	}
+
+	return 0;
+}
+
 static int is_dir_empty(const char *path)
 {
 	struct dirent **namelist = NULL;
@@ -413,6 +433,8 @@ static void tmpfiles(char *line)
 		errx(1, "Path name specifiers unsupported, skipping.");
 		return;
 	}
+	if (excluded(path))
+		return;
 
 	token = strtok(NULL, "\t ");
 	if (token) {
@@ -752,6 +774,8 @@ static int usage(int rc)
 		"  -C, --clean               Clean files and directories based on age\n"
 		"  -c, --create              Create files and directories\n"
 		"  -d, --debug               Show developer debug messages\n"
+		"  -E                        Exclude /dev, /proc, /run, and /sys\n"
+		"      --exclude-prefix=PFX  Ignore rules for paths starting with PFX\n"
 		"  -r, --remove              Remove files and directories marked for removal\n"
 		"  -h, --help                This help text\n"
 		"\n"
@@ -762,20 +786,25 @@ static int usage(int rc)
 	return rc;
 }
 
+enum {
+	OPT_EXCLUDE_PREFIX = 256,
+};
+
 int main(int argc, char *argv[])
 {
 	struct option long_options[] = {
-		{ "clean",      0, NULL, 'C' },
-		{ "create",     0, NULL, 'c' },
-		{ "debug",      0, NULL, 'd' },
-		{ "remove",     0, NULL, 'r' },
-		{ "help",       0, NULL, 'h' },
+		{ "clean",          0, NULL, 'C' },
+		{ "create",         0, NULL, 'c' },
+		{ "debug",          0, NULL, 'd' },
+		{ "exclude-prefix", 1, NULL, OPT_EXCLUDE_PREFIX },
+		{ "remove",         0, NULL, 'r' },
+		{ "help",           0, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 	};
 
 	int c;
 
-	while ((c = getopt_long(argc, argv, "Ccdrh?", long_options, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "CcdrEh?", long_options, NULL)) != EOF) {
 		switch(c) {
 		case 'C':
 			clean_flag = 1;
@@ -787,6 +816,17 @@ int main(int argc, char *argv[])
 
 		case 'd':
 			debug = 1;
+			break;
+
+		case 'E':
+			add_exclude_prefix("/dev");
+			add_exclude_prefix("/proc");
+			add_exclude_prefix("/run");
+			add_exclude_prefix("/sys");
+			break;
+
+		case OPT_EXCLUDE_PREFIX:
+			add_exclude_prefix(optarg);
 			break;
 
 		case 'r':
