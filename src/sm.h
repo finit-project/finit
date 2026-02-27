@@ -24,9 +24,9 @@
 #ifndef FINIT_SM_H_
 #define FINIT_SM_H_
 
-/* Set to 1 to enable shutdown trace logging (independent of 'initctl debug') */
+/* Set to 1 to trace shutdown (independent of 'initctl debug') */
 #ifndef SHUTDOWN_DEBUG
-#define SHUTDOWN_DEBUG 1
+#define SHUTDOWN_DEBUG 0
 #endif
 
 void sm_init      (void);
