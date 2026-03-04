@@ -121,9 +121,6 @@ static uev_t etcw;
 
 static TAILQ_HEAD(, conf_change) conf_change_list = TAILQ_HEAD_INITIALIZER(conf_change_list);
 
-static char *path;
-static char *shell;
-
 static int  parse_conf(char *file, int is_rcsd);
 static void drop_changes(void);
 
@@ -377,8 +374,6 @@ void conf_parse_cmdline(int argc, char *argv[])
 		fstab = strdup(ptr);
 	finit_conf = strdup(FINIT_CONF);
 	finit_rcsd = strdup(FINIT_RCSD);
-	path       = getenv("PATH");
-	shell      = getenv("SHELL");
 
 	for (int i = 1; i < argc; i++)
 		parse_arg(argv[i]);
@@ -404,13 +399,9 @@ void conf_reset_env(void)
 		free(node);
 	}
 
-	if (path)
-		setenv("PATH", path, 1);
-	else
+	if (!getenv("PATH"))
 		setenv("PATH", _PATH_STDPATH, 1);
-	if (shell)
-		setenv("SHELL", shell, 1);
-	else
+	if (!getenv("SHELL"))
 		setenv("SHELL", _PATH_BSHELL, 1);
 	setenv("LOGNAME", "root", 1);
 	setenv("USER", "root", 1);
