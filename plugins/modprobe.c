@@ -228,7 +228,7 @@ static void coldplug(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "modprobe",
 	.hook[HOOK_BASEFS_UP] = { .cb  = coldplug },
 	.depends = { "bootmisc", }
 };

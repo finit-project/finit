@@ -236,7 +236,7 @@ static void rtc_save(void *arg)
 	int fd, rc = 0;
 
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "rtc");
 		return;
 	}
 
@@ -266,7 +266,7 @@ static void rtc_restore(void *arg)
 	int fd, rc = 0;
 
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "rtc");
 		return;
 	}
 
@@ -321,7 +321,7 @@ static void update(uev_t *w, void *arg, int events)
 
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "rtc",
 	.hook[HOOK_BASEFS_UP] = {
 		.cb  = rtc_restore
 	},

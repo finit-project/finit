@@ -43,6 +43,7 @@
 static void tty_watcher(void *arg, int fd, int events);
 
 static plugin_t plugin = {
+	.name = "tty",
 	.io = {
 		.cb    = tty_watcher,
 		.flags = PLUGIN_IO_READ,

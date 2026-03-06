@@ -426,7 +426,7 @@ static void nl_enumerate(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "netlink",
 	.hook[HOOK_SVC_RECONF]  = { .cb = nl_reconf },
 	.hook[HOOK_SVC_PLUGIN]  = { .cb = nl_enumerate },
 	.io = {

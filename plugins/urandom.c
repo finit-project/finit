@@ -87,7 +87,7 @@ static void setup(void *arg)
 	int fd, err;
 
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "urandom");
 		return;
 	}
 
@@ -188,7 +188,7 @@ static void save(void *arg)
 	mode_t prev;
 
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "urandom");
 		return;
 	}
 
@@ -202,7 +202,7 @@ static void save(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "urandom",
 	.hook[HOOK_BASEFS_UP] = { .cb  = setup },
 	.hook[HOOK_SHUTDOWN]  = { .cb  = save  },
 	.depends = { "bootmisc", }

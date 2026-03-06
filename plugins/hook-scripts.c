@@ -79,7 +79,7 @@ static void hscript_shutdown(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "hook-scripts",
 	.hook[HOOK_BANNER]      = { .cb  = hscript_banner      },
 	.hook[HOOK_ROOTFS_UP]   = { .cb  = hscript_rootfs_up   },
 	.hook[HOOK_MOUNT_ERROR] = { .cb  = hscript_mount_error },

@@ -39,7 +39,7 @@
 static void setup(void *arg)
 {
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "x11-common");
 		return;
 	}
 
@@ -48,7 +48,7 @@ static void setup(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "x11-common",
 	.hook[HOOK_SVC_PLUGIN] = { .cb  = setup },
 };
 

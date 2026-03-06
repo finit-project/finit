@@ -104,7 +104,7 @@ static void usr_init(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "usr",
 	.hook[HOOK_BASEFS_UP]  = { .cb = usr_init },
 	.depends = { "bootmisc", },
 };

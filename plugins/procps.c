@@ -43,7 +43,7 @@ static void setup(void *arg)
 	glob_t gl;
 
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "procps");
 		return;
 	}
 
@@ -69,7 +69,7 @@ static void setup(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "procps",
 	.hook[HOOK_BASEFS_UP] = {
 		.cb  = setup
 	},
