@@ -335,7 +335,7 @@ static void pidfile_init(void *arg)
  * SIGSTP:ed (in state PAUSED) waiting for <net/iface/lo>.
  */
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "pidfile",
 	.hook[HOOK_BASEFS_UP]  = { .cb = pidfile_init   },
 	.hook[HOOK_SVC_RECONF] = { .cb = pidfile_reconf },
 	.depends = { "netlink" }, /* bootmisc depends on us */

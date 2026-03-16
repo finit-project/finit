@@ -172,7 +172,7 @@ static void setup(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "bootmisc",
 	.hook[HOOK_MOUNT_POST] = { .cb = clean },
 	.hook[HOOK_BASEFS_UP]  = { .cb = setup },
 	.depends = { "pidfile" },

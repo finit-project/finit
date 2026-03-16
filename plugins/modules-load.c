@@ -213,7 +213,7 @@ static void load(void *arg)
 }
 
 static plugin_t plugin = {
-	.name                  = __FILE__,
+	.name = "modules-load",
 	.hook[HOOK_SVC_PLUGIN] = { .cb  = load },
 };
 

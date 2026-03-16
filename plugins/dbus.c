@@ -106,7 +106,7 @@ static void setup(void *arg)
 	char *cmd;
 
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "dbus");
 		return;
 	}
 
@@ -164,7 +164,7 @@ static void setup(void *arg)
 }
 
 static plugin_t plugin = {
-	.name                  = __FILE__,
+	.name = "dbus",
 	.hook[HOOK_SVC_PLUGIN] = { .cb  = setup },
 };
 

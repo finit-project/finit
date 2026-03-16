@@ -38,7 +38,7 @@
 static void save(void *arg)
 {
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "alsa-utils");
 		return;
 	}
 
@@ -51,7 +51,7 @@ static void save(void *arg)
 static void restore(void *arg)
 {
 	if (rescue) {
-		dbg("Skipping %s plugin in rescue mode.", __FILE__);
+		dbg("Skipping %s plugin in rescue mode.", "alsa-utils");
 		return;
 	}
 
@@ -62,7 +62,7 @@ static void restore(void *arg)
 }
 
 static plugin_t plugin = {
-	.name = __FILE__,
+	.name = "alsa-utils",
 	.hook[HOOK_BASEFS_UP] = { .cb  = restore },
 	.hook[HOOK_SHUTDOWN]  = { .cb  = save    }
 };
