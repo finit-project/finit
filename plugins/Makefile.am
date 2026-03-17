@@ -29,6 +29,10 @@ if BUILD_NETLINK_PLUGIN
 libplug_la_SOURCES += netlink.c
 endif
 
+if BUILD_PLYMOUTH_PLUGIN
+libplug_la_SOURCES += plymouth.c
+endif
+
 if BUILD_RESOLVCONF_PLUGIN
 libplug_la_SOURCES += resolvconf.c
 endif
@@ -74,6 +78,10 @@ endif
 
 if BUILD_NETLINK_PLUGIN
 pkglib_LTLIBRARIES += netlink.la
+endif
+
+if BUILD_PLYMOUTH_PLUGIN
+pkglib_LTLIBRARIES += plymouth.la
 endif
 
 if BUILD_RESOLVCONF_PLUGIN

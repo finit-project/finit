@@ -116,6 +116,7 @@ AC_PLUGIN([hotplug],       [yes], [Start udevd or mdev kernel event datamon])
 AC_PLUGIN([rtc],           [yes], [Save and restore RTC using hwclock])
 AC_PLUGIN([tty],           [yes], [Automatically activate new TTYs, e.g. USB-to-serial])
 AC_PLUGIN([urandom],       [yes], [Setup and save random seed at boot/shutdown])
+AC_PLUGIN([plymouth],      [no],  [Plymouth boot splash integration])
 AC_PLUGIN([testserv],      [no],  [Test plugin to start test serv daemon])
 
 # Check for extra arguments or packages
