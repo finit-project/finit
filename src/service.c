@@ -2418,7 +2418,21 @@ void service_update_rdeps(void)
 		if (!svc_is_noreload(svc))
 			continue; /* Yup, no need to stop start rdeps */
 
-		svc_mark_affected(mkcond(svc, cond, sizeof(cond)));
+		/*
+		 * Clear the condition immediately, before service_step_all()
+		 * runs.  cond_clear() calls cond_update() which calls
+		 * service_step() on all affected services right now.  Those
+		 * services see COND_OFF and get service_stop() called,
+		 * transitioning to STOPPING_STATE before we ever send SIGTERM
+		 * to this service.  Without this, the condition is only cleared
+		 * after the service dies, by which time reverse-dependencies
+		 * may have already crashed due to the lost connection.
+		 * See also: api.c do_reload() which does the same for direct
+		 * 'initctl reload <svc>' calls.
+		 */
+		mkcond(svc, cond, sizeof(cond));
+		cond_clear(cond);
+		svc_mark_affected(cond);
 	}
 }
 
