@@ -370,8 +370,8 @@ static void fs_finalize(void)
 		fs_mount("shm", "/dev/shm", "tmpfs", flags | MS_NODEV, "mode=1777");
 	}
 
-	/* Modern systems use /dev/pts */
-	if (!fismnt("/dev/pts")) {
+	/* Remount devpts with proper gid/mode now that /etc/group is available */
+	{
 		char opts[32];
 		int gid;
 
@@ -383,7 +383,8 @@ static void fs_finalize(void)
 		snprintf(opts, sizeof(opts), "gid=%d,mode=0620,ptmxmode=0666", gid);
 
 		makedir("/dev/pts", 0755);
-		fs_mount("devpts", "/dev/pts", "devpts", flags, opts);
+		fs_mount("devpts", "/dev/pts", "devpts",
+			 flags | MS_REMOUNT, opts);
 	}
 
 	/* Needed on systems like Alpine Linux */
@@ -528,6 +529,13 @@ static void fs_init(void)
 			warn("Failed creating mountpoint %s: %s", fs[i].file, strerror(errno));
 
 		fs_mount(fs[i].spec, fs[i].file, fs[i].type, 0, NULL);
+	}
+
+	/* Early devpts mount for plugins that need PTY access (e.g. plymouth) */
+	if (!fismnt("/dev/pts")) {
+		makedir("/dev/pts", 0755);
+		fs_mount("devpts", "/dev/pts", "devpts",
+			 MS_NOSUID | MS_NOEXEC, "ptmxmode=0666");
 	}
 }
 
