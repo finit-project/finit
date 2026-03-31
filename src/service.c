@@ -2032,7 +2032,7 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 		strlcpy(svc->cmd, cmd, sizeof(svc->cmd));
 
 		/* e.g., if missing cmd or env before */
-		if (!manual)
+		if (!manual && svc->block != SVC_BLOCK_USER)
 			svc_unblock(svc);
 	}
 
