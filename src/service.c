@@ -29,10 +29,12 @@
 #include <sched.h>		/* sched_yield() */
 #include <string.h>
 #include <sys/reboot.h>
+#include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <linux/vt.h>
 #include <net/if.h>
 #ifdef _LIBITE_LITE
 # include <libite/lite.h>
@@ -385,6 +387,43 @@ static int lredirect(svc_t *svc)
 	dup2(pipefd[1], STDERR_FILENO);
 
 	return close(pipefd[1]);
+}
+
+/*
+ * Set up a controlling TTY for run/task/service.
+ * Opens the TTY device, dups to 0/1/2, resets termios to
+ * sane defaults, sets TERM env, and updates procname.
+ */
+static void svc_prepare_ctty(const char *tty, const char *procname, int log)
+{
+	int fd, dummy;
+
+	fd = open(tty, O_RDWR);
+	if (fd < 0) {
+		logit(LOG_ERR, "Failed opening %s: %s", tty, strerror(errno));
+		_exit(1);
+	}
+
+	/* Acquire as controlling terminal for the session */
+	ioctl(fd, TIOCSCTTY, 0);
+
+	dup2(fd, STDIN_FILENO);
+	if (!log) {
+		dup2(fd, STDOUT_FILENO);
+		dup2(fd, STDERR_FILENO);
+	}
+
+	/* Set default TERM */
+	if (ioctl(fd, VT_OPENQRY, &dummy) == -1)
+		setenv("TERM", "vt102", 1);	/* likely a serial line */
+	else
+		setenv("TERM", "linux", 1);
+
+	/* Reset to sane defaults */
+	stty(fd, B0);
+	close(fd);
+
+	prctl(PR_SET_NAME, procname, 0, 0, 0);
 }
 
 /*
@@ -945,6 +984,14 @@ static int service_start(svc_t *svc)
 			syslog(LOG_ERR, "failed setsid(), pid %d: %s", pid, strerror(errno));
 
 		sig_unblock();
+
+		/*
+		 * If the stanza declared tty:<dev>, set up a controlling
+		 * terminal on that device now that we're a session leader.
+		 * Must run after setsid() to acquire the controlling TTY.
+		 */
+		if (!svc_is_tty(svc) && svc_has_ctty(svc))
+			svc_prepare_ctty(svc->log.ctty, svc->cmd, !!svc->log.enabled);
 
 		if (svc_is_runtask(svc))
 			status = exec_runtask(args[0], &args[1]);
@@ -1795,6 +1842,7 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 	char ident[MAX_IDENT_LEN];
 	char *ifstmt = NULL;
 	char *notify = NULL;
+	char *ctty = NULL;
 	struct tty tty = { 0 };
 	char *dev = NULL;
 	int respawn = 0;
@@ -1911,6 +1959,8 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 			env = arg;
 		else if (MATCH_CMD(cmd, "caps:", arg))
 			caps = arg;
+		else if (MATCH_CMD(cmd, "tty:", arg))
+			ctty = arg;
 		/* catch both cgroup: and cgroup. handled in parse_cgroup() */
 		else if (MATCH_CMD(cmd, "cgroup", arg))
 			cgroup = arg;
@@ -2160,6 +2210,22 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 		parse_caps(svc, caps);
 	else
 		memset(svc->capabilities, 0, sizeof(svc->capabilities));
+
+	if (!svc_is_tty(svc) && ctty) {
+		char *dev = ctty;
+
+		/* NOTE: @console expands only to first console, not all */
+		if (tty_isatcon(ctty))
+			dev = tty_atcon();
+		dev = tty_canonicalize(dev);
+		if (dev)
+			strlcpy(svc->log.ctty, dev, sizeof(svc->log.ctty));
+		else
+			logit(LOG_WARNING, "%s: tty: %s not found, skipping ctty", svc_ident(svc, NULL, 0), ctty);
+	} else if (!svc_is_tty(svc)) {
+		memset(svc->log.ctty, 0, sizeof(svc->log.ctty));
+	}
+
 	if (file)
 		strlcpy(svc->file, file, sizeof(svc->file));
 	else

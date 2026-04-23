@@ -61,7 +61,8 @@ For more complex setups (LUKS, LVM, etc.):
 
 ```
 # Unlock LUKS volume
-run [S] name:cryptsetup /sbin/cryptsetup open /dev/sda2 cryptroot -- Unlocking encrypted root
+# The tty:@console stanza is required so cryptsetup can prompt for a passphrase
+run [S] name:cryptsetup tty:@console /sbin/cryptsetup open /dev/sda2 cryptroot -- Unlocking encrypted root
 
 # Activate LVM
 run [S] name:lvm /sbin/lvm vgchange -ay -- Activating LVM volumes

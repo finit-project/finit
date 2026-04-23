@@ -176,6 +176,7 @@ typedef struct svc {
 			char  file[64];
 			char  prio[20];
 			char  ident[20];
+			char  ctty[32];
 		} log;
 
 		/* Only for TTY type services */
@@ -291,6 +292,7 @@ static inline int svc_in_runlevel  (svc_t *svc, int runlevel) { return svc && IS
 static inline int svc_has_pidfile  (svc_t *svc) { return svc_is_daemon(svc) && svc->pidfile[0] != 0 && svc->pidfile[0] != '!'; }
 static inline int svc_has_pre      (svc_t *svc) { return svc->pre_script[0];  }
 static inline int svc_has_post     (svc_t *svc) { return svc->post_script[0]; }
+static inline int svc_has_ctty     (svc_t *svc) { return svc && svc->log.ctty[0]; }
 static inline int svc_has_ready    (svc_t *svc) { return svc->ready_script[0];}
 static inline int svc_has_cleanup  (svc_t *svc) { return svc->cleanup_script[0]; }
 

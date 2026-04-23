@@ -46,6 +46,7 @@ Other run/task/service options are:
   * `cgroup.NAME[,opts]` or `cgroup:opts` -- see the [Cgroups](cgroups.md) section
   * `env:[-]/path/to/env` -- see the [Service Environment](service-env.md) section
   * `log:...` -- see [Redirecting Output](logging.md#redirecting-output)
+  * `tty:<dev>` -- see [Controlling TTY](tty.md#controlling-tty)
   * `nowarn` -- see [Conditional Loading](services.md#conditional-loading)
   * `notify:...` -- see [Service Synchronization](service-sync.md)
   * `if:...` -- see [Conditional Execution](services.md#conditional-execution)
