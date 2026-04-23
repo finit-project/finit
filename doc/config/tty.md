@@ -84,3 +84,30 @@ board bringup and system debugging it can come in handy.
 One can also use the `service` stanza to start a stand-alone shell:
 
     service [12345] /bin/sh -l
+
+Controlling TTY for Services
+----------------------------
+
+The `tty:<dev>` option gives a `run`, `task`, or `service` a controlling
+terminal on the given device.  The device is opened, set as the
+controlling terminal for the session (after `setsid()`), and connected to
+the process's stdin, stdout, and stderr.  A default `TERM` environment
+variable is set based on the device type: `vt102` for serial lines and
+`linux` for virtual terminals.
+
+`<dev>` may be a device node like `/dev/ttyS0`, or the special keyword
+`@console` (see above).  Note that `@console` expands only to the
+first console, not all.
+
+When `tty:` is combined with `log:`, stdout and stderr are redirected
+to the log sink instead of the TTY, but stdin remains connected to the
+TTY device.
+
+> The `tty:<dev>` option is for `run`, `task`, and `service` stanzas only.
+> The `tty` directive itself (for getty/login) has its own syntax, see
+> above.
+
+**Example:**
+
+    service [2345] tty:/dev/ttyS0 /usr/sbin/foo -- Foo on serial console
+    task [S] tty:@console my-setup-script -- Board bringup on console

@@ -744,6 +744,37 @@ is
 and the default
 .Cm tag
 identity is the basename of the service or run/task command.
+.It Cm tty:\&<dev>
+Give the
+.Cm run , task ,
+or
+.Cm service
+a controlling terminal on
+.Cm <dev> .
+The device is opened, set as the controlling terminal for the session
+(after
+.Fn setsid ) ,
+and connected to stdin, stdout, and stderr.
+A default
+.Ev TERM
+variable is set based on the device type:
+.Cm vt102
+for serial lines and
+.Cm linux
+for virtual terminals.
+.Cm <dev>
+may be a device node like
+.Pa /dev/ttyS0 ,
+or the special keyword
+.Cm @console
+(see TTYs and Consoles above).
+When combined with
+.Cm log: ,
+stdout and stderr are redirected to the log sink instead, but stdin
+remains connected to the TTY device.
+.Bd -unfilled -offset indent
+service [2345] tty:/dev/ttyS0 /usr/sbin/foo -- Foo on serial console
+.Ed
 .El
 .Sh RESCUE MODE
 Finit supports a rescue mode which is activated by the
