@@ -3,6 +3,41 @@ Change Log
 
 All relevant changes are documented in this file.
 
+[4.17][] - 2026-04-xx
+---------------------
+
+### Changes
+
+- Add Plymouth boot splash plugin to manage the `plymouthd` lifecycle across boot,
+  `switch_root`, and shutdown.  Activated by the `splash` kernel command line
+  argument.  By Aaron Andersen
+- Add `tty:` option for run/task/service stanzas to acquire a controlling
+  terminal.  The device is opened as stdin, set as the session's controlling TTY
+  via `TIOCSCTTY`, and `TERM` is set automatically — `linux` for virtual terminals
+  and `vt102` for serial lines.  By Ollie Gutierrez
+- Improve console output atomicity at boot and shutdown: description and status
+  (`[ OK ]` / `[FAIL]`) are emitted in a single write so kernel messages cannot
+  split them.  If output has been scrolled away, the description is re-printed
+  before the final status line.  Console buffer is drained with `tcdrain(2)` and
+  ANSI attributes are reset before handing control back to the kernel at
+  shutdown/reboot
+
+### Fixes
+
+- Fix reverse-dependency condition handling on reload: when a service without
+  SIGHUP support is reloaded, its condition is now cleared immediately so
+  dependents transition to `STOPPING` before `SIGTERM` is sent to the parent,
+  preventing them from crashing with an incremented restart counter
+- Fix `/var/tmp` mode in `tmpfiles.d/var.conf` from `0777` to `1777` (sticky bit)
+  to match `/tmp`, by Aaron Andersen
+- Fix potential memory corruption in config parser: stale pointer captures of
+  `PATH` and `SHELL` at startup could dangle after environment modification;
+  `conf_reset_env()` now reads from the live environment instead, by Vasily Zubko
+- Fix plugin name registration: replace `__FILE__` macro with explicit string
+  literals in all plugin structs and debug messages, preventing subtle build-
+  system–dependent macro expansion issues, by Vasily Zubko
+
+
 [4.16][] - 2026-02-27
 ---------------------
 
@@ -1968,7 +2003,8 @@ Major bug fix release.
 
 * Initial release
 
-[UNRELEASED]: https://github.com/finit-project/finit/compare/4.15...HEAD
+[UNRELEASED]: https://github.com/finit-project/finit/compare/4.17...HEAD
+[4.17]: https://github.com/finit-project/finit/compare/4.16...4.17
 [4.16]: https://github.com/finit-project/finit/compare/4.15...4.16
 [4.15]: https://github.com/finit-project/finit/compare/4.14...4.15
 [4.14]: https://github.com/finit-project/finit/compare/4.13...4.14
