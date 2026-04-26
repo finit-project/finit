@@ -73,7 +73,8 @@ static int delete_cb(const char *fpath, const struct stat *sb, int tflag, struct
 	if (sb->st_dev != delete_rootdev)
 		return 0;
 
-	remove(fpath);
+	if (remove(fpath))
+		dbg("Failed to remove %s: %s", fpath, strerror(errno));
 	return 0;
 }
 
@@ -146,6 +147,7 @@ int switch_root(const char *newroot, const char *newinit)
 	struct stat newroot_st, oldroot_st;
 	char init_path[PATH_MAX];
 	int console_fd;
+	int fd;
 	dev_t rootdev;
 	int signo;
 
@@ -166,17 +168,31 @@ int switch_root(const char *newroot, const char *newinit)
 	}
 
 	/* Verify newroot exists and is a directory */
-	if (stat(newroot, &newroot_st) || !S_ISDIR(newroot_st.st_mode)) {
+	fd = open(newroot, O_RDONLY | O_DIRECTORY);
+	if (fd < 0) {
 		logit(LOG_ERR, "switch_root: %s is not a directory", newroot);
 		errno = ENOTDIR;
 		return -1;
 	}
+	if (fstat(fd, &newroot_st)) {
+		close(fd);
+		logit(LOG_ERR, "switch_root: cannot stat %s", newroot);
+		return -1;
+	}
+	close(fd);
 
 	/* Verify newroot is a mount point (different device than parent) */
-	if (stat("/", &oldroot_st)) {
+	fd = open("/", O_RDONLY | O_DIRECTORY);
+	if (fd < 0) {
+		logit(LOG_ERR, "switch_root: cannot open /");
+		return -1;
+	}
+	if (fstat(fd, &oldroot_st)) {
+		close(fd);
 		logit(LOG_ERR, "switch_root: cannot stat /");
 		return -1;
 	}
+	close(fd);
 
 	if (newroot_st.st_dev == oldroot_st.st_dev) {
 		logit(LOG_ERR, "switch_root: %s is not a mount point", newroot);
@@ -259,18 +275,14 @@ int switch_root(const char *newroot, const char *newinit)
 		return -1;
 	}
 
-	/* Reopen console */
-	close(STDIN_FILENO);
-	close(STDOUT_FILENO);
-	close(STDERR_FILENO);
-
+	/* Reopen console in new root.  dup2() closes the old fds itself,
+	 * so open() returns a fd > STDERR_FILENO that we can always close. */
 	console_fd = open("/dev/console", O_RDWR);
 	if (console_fd >= 0) {
 		dup2(console_fd, STDIN_FILENO);
 		dup2(console_fd, STDOUT_FILENO);
 		dup2(console_fd, STDERR_FILENO);
-		if (console_fd > STDERR_FILENO)
-			close(console_fd);
+		close(console_fd);
 	}
 
 	/* Reset signals to default */
