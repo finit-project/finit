@@ -3,7 +3,7 @@ Change Log
 
 All relevant changes are documented in this file.
 
-[4.17][] - 2026-04-xx
+[4.17][] - 2026-04-28
 ---------------------
 
 ### Changes
