@@ -379,7 +379,6 @@ void print(int rc, const char *fmt, ...)
 		/* Pending state: show description with spinner, no final status yet */
 		if (!buf[0])
 			return;
-		delline();
 		if (progress_style == PROGRESS_CLASSIC)
 			cprintf("\r%s ", pad(buf, sizeof(buf), ".", sizeof(buf)));
 		else
@@ -391,15 +390,21 @@ void print(int rc, const char *fmt, ...)
 	 * Final status.  Emit description + status in a single cprintf() so
 	 * both reach the console in one write(), preventing kernel messages or
 	 * command output from splitting the description from its [ OK ]/[FAIL].
+	 *
+	 * status() returns a pointer to a static buffer, so we must copy the
+	 * result for rc before calling status(3) — the second call overwrites
+	 * the same buffer, corrupting the first result.
 	 */
 	last_desc[0] = 0;
 
 	if (buf[0]) {
-		delline();
+		char st[64];
+
+		strlcpy(st, status(rc), sizeof(st));
 		if (progress_style == PROGRESS_CLASSIC)
-			cprintf("\r%s %s\n", pad(buf, sizeof(buf), ".", sizeof(buf)), status(rc));
+			cprintf("\r%s %s\n", pad(buf, sizeof(buf), ".", sizeof(buf)), st);
 		else
-			cprintf("\r\e[K%s%s\r%s\n", status(3), buf, status(rc));
+			cprintf("\r\e[K%s%s\r%s\n", status(3), buf, st);
 	} else {
 		if (progress_style == PROGRESS_CLASSIC)
 			cprintf("%s\n", status(rc));
