@@ -378,6 +378,17 @@ static void init_dev_condition_dir(void)
 		warn("Failed creating dev condition directory %s", dir);
 }
 
+static void disable_uevent_helper(void)
+{
+	FILE *fp;
+
+	fp = fopen("/proc/sys/kernel/hotplug", "w");
+	if (!fp)
+		return;
+	fputs("\n", fp);
+	fclose(fp);
+}
+
 static void set_logging(int prio)
 {
 	setlogmask(LOG_UPTO(prio));
@@ -486,6 +497,9 @@ int main(int argc, char *argv[])
 	/* Initialize condition directories */
 	init_power_supply();
 	init_dev_condition_dir();
+
+	/* Disable legacy kernel uevent helper; we own events via netlink */
+	disable_uevent_helper();
 
 	/* Set up netlink socket for kernel uevents */
 	pfd.events = POLLIN;
