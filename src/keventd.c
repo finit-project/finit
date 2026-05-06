@@ -539,6 +539,7 @@ int main(int argc, char *argv[])
 	if (do_coldplug)
 		coldplug();
 
+	pidfile(NULL);
 	logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
 
 	while (running) {

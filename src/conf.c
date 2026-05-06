@@ -2560,7 +2560,7 @@ int conf_init(uev_ctx_t *ctx)
 		conf_save_service(SVC_TYPE_SERVICE, "keventd", "keventd.conf",
 				  "\tdescription = \"kernel event daemon\"\n"
 				  "\trunlevel    = \"S0123456789\"\n"
-				  "\tnotify      = \"none\"\n"
+				  "\tnotify      = \"pid\"\n"
 				  "\tcgroup init {}\n"
 				  "\tcommand     = \"" FINIT_EXECPATH_ "/keventd"
 #ifdef HAVE_HOTPLUG_PLUGIN
