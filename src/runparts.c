@@ -193,7 +193,19 @@ int run_parts(char *dir, char *cmd, const char *env[], int progress, int sysv)
 #ifndef __FINIT__
 static int usage(int rc)
 {
-	warnx("usage: runparts [-bdhps?] DIRECTORY");
+	fprintf(stderr,
+		"Usage: runparts [OPTIONS] DIRECTORY\n"
+		"\n"
+		"Run all executable scripts in DIRECTORY in alphabetical order.\n"
+		"Scripts prefixed S<NUM> are called with 'start', K<NUM> with 'stop'.\n"
+		"\n"
+		"Options:\n"
+		"  -b    Batch mode, disable progress output and ANSI colors\n"
+		"  -d    Enable debug output\n"
+		"  -h    This help text\n"
+		"  -p    Show progress and exit status for each script\n"
+		"  -s    SysV compat, only run S<NUM>name and K<NUM>name scripts\n"
+		"\n");
 	return rc;
 }
 
