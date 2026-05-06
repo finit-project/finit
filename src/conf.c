@@ -2552,15 +2552,23 @@ int conf_init(uev_ctx_t *ctx)
 	}
 #endif
 	/*
-	 * Start kernel event daemon as soon as possible, if enabled
+	 * Start kernel event daemon as soon as possible, if enabled.
+	 * In passive mode (-p) alongside the hotplug plugin, keventd
+	 * only monitors power supply events (sys/pwr/ac condition).
 	 */
 	if (whichp(FINIT_EXECPATH_ "/keventd"))
 		conf_save_service(SVC_TYPE_SERVICE, "keventd", "keventd.conf",
-				  "\tdescription = \"Finit kernel event daemon\"\n"
-				  "\trunlevel    = \"S12345789\"\n"
+				  "\tdescription = \"kernel event daemon\"\n"
+				  "\trunlevel    = \"S0123456789\"\n"
 				  "\tnotify      = \"none\"\n"
 				  "\tcgroup init {}\n"
-				  "\tcommand     = \"" FINIT_EXECPATH_ "/keventd\"\n");
+				  "\tcommand     = \"" FINIT_EXECPATH_ "/keventd"
+#ifdef HAVE_HOTPLUG_PLUGIN
+				  " -p"
+#else
+				  " -c"
+#endif
+				  "\"\n");
 
 	dbg("Allow plugins to register early runlevel 1 run/task/services ...");
 	plugin_run_hooks(HOOK_SVC_PLUGIN);

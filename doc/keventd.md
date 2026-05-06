@@ -259,11 +259,12 @@ This means keventd can also be tested independently:
     # Run without rebroadcast (e.g., headless embedded system)
     keventd -c -G
 
-When keventd is enabled, it conflicts with external device managers.
-Only one device manager should be active at a time.  The system
-configuration uses the `conflict:` directive to enforce this:
-
-    service conflict:udevd,mdevd,mdev [...] keventd -c -- Finit device manager
+Only one device manager should be active at a time.  This is settled
+at build time: with the hotplug plugin enabled, Finit starts keventd
+in passive mode (`-p`), leaving device management to the udevd, mdevd,
+or mdev service from `system/10-hotplug.conf` and monitoring only
+power supply events.  Without the hotplug plugin, keventd runs as the
+system device manager (`keventd -c`).
 
 [libudev-zero]: https://github.com/illiliti/libudev-zero
 [mdevd]:        https://skarnet.org/software/mdevd/

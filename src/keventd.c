@@ -76,6 +76,7 @@ static int num_ac;
 static int running = 1;
 static int level;
 static int logon;
+static int passive;		/* power-supply only, no device management */
 
 int debug;			/* debug in other modules as well */
 
@@ -283,29 +284,33 @@ static void handle_uevent(char *buf, size_t len)
 
 	switch (ev.action) {
 	case ACT_ADD:
-		/* Firmware loading takes priority */
-		if (ev.firmware)
-			firmware_load(&ev);
+		if (!passive) {
+			/* Firmware loading takes priority */
+			if (ev.firmware)
+				firmware_load(&ev);
 
-		/* Module loading */
-		if (ev.modalias)
-			modprobe_load(ev.modalias);
+			/* Module loading */
+			if (ev.modalias)
+				modprobe_load(ev.modalias);
 
-		/* Create device node if we have the info */
-		if (ev.major >= 0 && ev.minor >= 0 && ev.devname)
-			devnode_add(&ev);
+			/* Create device node if we have the info */
+			if (ev.major >= 0 && ev.minor >= 0 && ev.devname)
+				devnode_add(&ev);
 
-		/* Create symlinks */
-		symlink_add(&ev);
+			/* Create symlinks */
+			symlink_add(&ev);
+		}
 		break;
 
 	case ACT_REMOVE:
-		/* Remove symlinks first */
-		symlink_del(&ev);
+		if (!passive) {
+			/* Remove symlinks first */
+			symlink_del(&ev);
 
-		/* Remove device node */
-		if (ev.devname)
-			devnode_del(&ev);
+			/* Remove device node */
+			if (ev.devname)
+				devnode_del(&ev);
+		}
 		break;
 
 	case ACT_CHANGE:
@@ -412,7 +417,7 @@ static void shut_down(int signo)
 static int usage(int rc)
 {
 	fprintf(stderr,
-		"Usage: keventd [-dGhnv] [-c] [-g GROUP]\n"
+		"Usage: keventd [-dGhnpv] [-c] [-g GROUP]\n"
 		"\n"
 		"Options:\n"
 		"  -c        Run coldplug at startup\n"
@@ -421,6 +426,7 @@ static int usage(int rc)
 		"  -G        Disable netlink rebroadcast entirely\n"
 		"  -h        Show this help text\n"
 		"  -n        Run in foreground (no daemon)\n"
+		"  -p        Passive mode: power supply events only (no device management)\n"
 		"  -v        Show version\n"
 		"\n", REBC_DEFAULT_NLGROUP);
 
@@ -454,7 +460,7 @@ int main(int argc, char *argv[])
 	 * requested bits verbatim instead of masking them. */
 	umask(0);
 
-	while ((c = getopt(argc, argv, "cdg:Ghnv")) != -1) {
+	while ((c = getopt(argc, argv, "cdg:Ghnpv")) != -1) {
 		switch (c) {
 		case 'c':
 			do_coldplug = 1;
@@ -473,6 +479,9 @@ int main(int argc, char *argv[])
 			return usage(0);
 		case 'n':
 			foreground = 1;
+			break;
+		case 'p':
+			passive = 1;
 			break;
 		case 'v':
 			printf("keventd v%s\n", KEVENTD_VERSION);
@@ -498,8 +507,10 @@ int main(int argc, char *argv[])
 	init_power_supply();
 	init_dev_condition_dir();
 
-	/* Disable legacy kernel uevent helper; we own events via netlink */
-	disable_uevent_helper();
+	/* Disable legacy kernel uevent helper; we own events via netlink.
+	 * Skip in passive mode -- the hotplug daemon handles this. */
+	if (!passive)
+		disable_uevent_helper();
 
 	/* Set up netlink socket for kernel uevents */
 	pfd.events = POLLIN;
@@ -519,8 +530,9 @@ int main(int argc, char *argv[])
 		setsockopt(pfd.fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 	}
 
-	/* Initialize rebroadcast socket (default on, -G to disable) */
-	if (nlgroups)
+	/* Initialize rebroadcast socket (default on, -G to disable).
+	 * Skip in passive mode -- the hotplug daemon rebroadcasts. */
+	if (nlgroups && !passive)
 		rebc_init(nlgroups);
 
 	/* Run coldplug if requested */
