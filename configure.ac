@@ -16,6 +16,7 @@ AC_CONFIG_FILES([Makefile
 	man/Makefile
 	plugins/Makefile
 	src/Makefile
+	keventd/Makefile
 	system/Makefile system/10-hotplug.conf
 	test/test.env test/Makefile
 	test/lib/Makefile test/src/Makefile

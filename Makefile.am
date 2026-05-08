@@ -1,5 +1,9 @@
 ACLOCAL_AMFLAGS    = -I m4
 SUBDIRS            = man plugins src system tmpfiles.d
+
+if KEVENTD
+SUBDIRS           += keventd
+endif
 dist_doc_DATA      = README.md LICENSE contrib/finit.conf
 
 if CONTRIB

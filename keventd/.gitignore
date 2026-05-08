@@ -1,0 +1,4 @@
+.deps/
+keventd
+Makefile
+Makefile.in
