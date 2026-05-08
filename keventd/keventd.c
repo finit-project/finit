@@ -34,6 +34,7 @@
  * THE SOFTWARE.
  */
 
+#include <ctype.h>
 #include <errno.h>
 #include <dirent.h>
 #include <getopt.h>
@@ -60,6 +61,8 @@
 #endif
 
 #include "keventd.h"
+#include "rules.h"
+#include "udevdb.h"
 #include "cond.h"
 #include "pid.h"
 #include "util.h"
@@ -77,6 +80,10 @@ static int running = 1;
 static int level;
 static int logon;
 static int passive;		/* power-supply only, no device management */
+
+static struct rule_list rules = TAILQ_HEAD_INITIALIZER(rules);
+static char *rules_dir;			/* extra rules dir from -r option */
+static volatile sig_atomic_t reload_rules;
 
 int debug;			/* debug in other modules as well */
 
@@ -268,6 +275,27 @@ static void power_supply_change(const struct uevent *ev, char *buf, size_t len)
 }
 
 /*
+ * True if rules have queued the kmod builtin for this event.  Used to
+ * suppress the direct modprobe path when 80-drivers.rules will fork
+ * modprobe anyway -- otherwise coldplug runs modprobe twice per event.
+ */
+static int applied_has_kmod(const struct uevent *ev)
+{
+	int i;
+
+	for (i = 0; i < ev->applied.nruncmds; i++) {
+		const char *cmd = ev->applied.run_cmds[i];
+
+		if (ev->applied.run_types[i] != RUN_BUILTIN)
+			continue;
+		if (!strncmp(cmd, "kmod", 4) &&
+		    (cmd[4] == '\0' || isspace((unsigned char)cmd[4])))
+			return 1;
+	}
+	return 0;
+}
+
+/*
  * Handle a single uevent from the kernel.
  */
 static void handle_uevent(char *buf, size_t len)
@@ -282,6 +310,10 @@ static void handle_uevent(char *buf, size_t len)
 	      ev.subsystem ?: "", ev.devname ?: "",
 	      ev.major, ev.minor);
 
+	/* Apply udev rules before built-in device handling */
+	if (!passive)
+		rules_apply(&rules, &ev);
+
 	switch (ev.action) {
 	case ACT_ADD:
 		if (!passive) {
@@ -289,13 +321,16 @@ static void handle_uevent(char *buf, size_t len)
 			if (ev.firmware)
 				firmware_load(&ev);
 
-			/* Module loading */
-			if (ev.modalias)
+			if (ev.modalias && !applied_has_kmod(&ev))
 				modprobe_load(ev.modalias);
 
 			/* Create device node if we have the info */
 			if (ev.major >= 0 && ev.minor >= 0 && ev.devname)
 				devnode_add(&ev);
+
+			/* Rename network interface if NAME= rule was applied */
+			if (ev.subsystem && !strcmp(ev.subsystem, "net"))
+				netdev_add(&ev);
 
 			/* Create symlinks */
 			symlink_add(&ev);
@@ -327,6 +362,20 @@ static void handle_uevent(char *buf, size_t len)
 	default:
 		break;
 	}
+
+	/* Execute RUN+= commands from matched rules */
+	if (!passive)
+		rules_run_cmds(&ev);
+
+	/* Persist device properties to /run/udev/data/ */
+	if (!passive) {
+		if (ev.action == ACT_REMOVE)
+			udevdb_delete(&ev);
+		else
+			udevdb_write(&ev);
+	}
+
+	uevent_env_free(&ev);
 }
 
 static void init_power_supply(void)
@@ -414,10 +463,16 @@ static void shut_down(int signo)
 	running = 0;
 }
 
+static void sighup_handler(int signo)
+{
+	(void)signo;
+	reload_rules = 1;
+}
+
 static int usage(int rc)
 {
 	fprintf(stderr,
-		"Usage: keventd [-dGhnpv] [-c] [-g GROUP]\n"
+		"Usage: keventd [-dGhnpv] [-c] [-g GROUP] [-r DIR]\n"
 		"\n"
 		"Options:\n"
 		"  -c        Run coldplug at startup\n"
@@ -427,6 +482,7 @@ static int usage(int rc)
 		"  -h        Show this help text\n"
 		"  -n        Run in foreground (no daemon)\n"
 		"  -p        Passive mode: power supply events only (no device management)\n"
+		"  -r DIR    Extra rules directory (in addition to standard udev paths)\n"
 		"  -v        Show version\n"
 		"\n", REBC_DEFAULT_NLGROUP);
 
@@ -460,7 +516,7 @@ int main(int argc, char *argv[])
 	 * requested bits verbatim instead of masking them. */
 	umask(0);
 
-	while ((c = getopt(argc, argv, "cdg:Ghnpv")) != -1) {
+	while ((c = getopt(argc, argv, "cdg:Ghnpr:v")) != -1) {
 		switch (c) {
 		case 'c':
 			do_coldplug = 1;
@@ -483,6 +539,9 @@ int main(int argc, char *argv[])
 		case 'p':
 			passive = 1;
 			break;
+		case 'r':
+			rules_dir = optarg;
+			break;
 		case 'v':
 			printf("keventd v%s\n", KEVENTD_VERSION);
 			return 0;
@@ -501,6 +560,7 @@ int main(int argc, char *argv[])
 
 	signal(SIGUSR1, toggle_debug);
 	signal(SIGTERM, shut_down);
+	signal(SIGHUP,  sighup_handler);
 	signal(SIGCHLD, SIG_IGN);	/* Don't wait for modprobe children */
 
 	/* Initialize condition directories */
@@ -539,12 +599,23 @@ int main(int argc, char *argv[])
 	if (do_coldplug)
 		coldplug();
 
+	/* Load udev rules from standard directories (and -r extra_dir) */
+	if (!passive)
+		rules_load_all(&rules, rules_dir);
+
 	pidfile(NULL);
 	logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
 
 	while (running) {
 		char rebc_buf[UEVENT_BUFFER_SIZE];
 		int len;
+
+		/* Reload rules if SIGHUP was received */
+		if (reload_rules) {
+			reload_rules = 0;
+			rules_free(&rules);
+			rules_load_all(&rules, rules_dir);
+		}
 
 		if (-1 == poll(&pfd, 1, -1)) {
 			if (errno == EINTR)
@@ -592,6 +663,7 @@ int main(int argc, char *argv[])
 	if (rebc_fd != -1)
 		close(rebc_fd);
 	close(pfd.fd);
+	rules_free(&rules);
 	logit(LOG_NOTICE, "keventd shutting down");
 
 	return 0;

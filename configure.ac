@@ -319,7 +319,11 @@ AS_IF([test "x$rtc_file" != "xno"], [
 	AC_DEFINE_UNQUOTED(RTC_FILE, "$rtcfile_path", [Save and restore system time from this file if /dev/rtc is missing.])],[
 	AC_DEFINE_UNQUOTED(RTC_FILE, NULL)])
 
-AS_IF([test "x$with_keventd" != "xno"], [with_keventd=yes])
+AS_IF([test "x$with_keventd" != "xno"], [
+	with_keventd=yes
+	PKG_CHECK_MODULES([blkid], [blkid],, [
+		AC_MSG_ERROR([libblkid (util-linux) is required to build keventd.
+		Install the dev package (e.g. libblkid-dev) or disable keventd with --without-keventd])])])
 
 AS_IF([test "x$with_sulogin" != "xno"], [
 	AS_IF([test "x$sulogin" = "xyes"], [
@@ -435,7 +439,7 @@ Optional features:
   Install doc/..........: $enable_doc
   Install contrib/......: $enable_contrib
   Bash completion.......: $bash_completion_dir
-  Built-in keventd......: $with_keventd
+  Built-in keventd......: $with_keventd (blkid: $blkid_LIBS)
   Built-in sulogin......: $with_sulogin $sulogin
   Built-in watchdogd....: $with_watchdog $watchdog
   Built-in logrotate....: $enable_logrotate

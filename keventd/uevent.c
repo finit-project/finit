@@ -34,11 +34,15 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+
+#include <net/if.h>
 
 #ifdef _LIBITE_LITE
 # include <libite/lite.h>
@@ -229,6 +233,16 @@ int uevent_parse(char *buf, size_t len, struct uevent *ev)
 	hdrlen = strlen(buf) + 1 + strlen(ev->devpath) + 1;
 	i = hdrlen;
 
+	/* Seed env store with header fields not present as KEY=VALUE pairs */
+	if (ev->nenv < UEVENT_ENV_MAX - 1) {
+		ev->env_key[ev->nenv] = (char *)"ACTION";
+		ev->env_val[ev->nenv] = buf;	/* points to null-term'd action string */
+		ev->nenv++;
+		ev->env_key[ev->nenv] = (char *)"DEVPATH";
+		ev->env_val[ev->nenv] = ev->devpath;
+		ev->nenv++;
+	}
+
 	/* Parse KEY=VALUE pairs */
 	while (i < len) {
 		char *eq;
@@ -262,12 +276,122 @@ int uevent_parse(char *buf, size_t len, struct uevent *ev)
 				ev->seqnum = eq;
 			else if (!strcmp(line, "DRIVER"))
 				ev->driver = eq;
+
+			/* Store every pair in the env store for rule matching */
+			if (ev->nenv < UEVENT_ENV_MAX) {
+				ev->env_key[ev->nenv] = line;
+				ev->env_val[ev->nenv] = eq;
+				/* alloc flags stay 0: buffer pointers, never freed */
+				ev->nenv++;
+			}
 		}
 
 		i += strlen(line) + (eq ? strlen(eq) + 1 : 1) + 1;
 	}
 
 	return 0;
+}
+
+const char *uevent_sysname(const struct uevent *ev)
+{
+	const char *p;
+
+	if (!ev->devpath)
+		return NULL;
+	p = strrchr(ev->devpath, '/');
+	return p ? p + 1 : ev->devpath;
+}
+
+const char *uevent_getenv(const struct uevent *ev, const char *key)
+{
+	int i;
+
+	for (i = 0; i < ev->nenv; i++) {
+		if (!strcmp(ev->env_key[i], key))
+			return ev->env_val[i];
+	}
+	return NULL;
+}
+
+int uevent_setenv(struct uevent *ev, const char *key, const char *val)
+{
+	char *v;
+	int i;
+
+	/* Update value of an existing key */
+	for (i = 0; i < ev->nenv; i++) {
+		if (!strcmp(ev->env_key[i], key)) {
+			if (!strcmp(ev->env_val[i], val))
+				return 0;
+			v = strdup(val);
+			if (!v)
+				return -1;
+			if (ev->env_val_alloc[i])
+				free(ev->env_val[i]);
+			ev->env_val[i]       = v;
+			ev->env_val_alloc[i] = 1;
+			return 0;
+		}
+	}
+
+	/* Add new key — both key and value are heap-allocated */
+	if (ev->nenv >= UEVENT_ENV_MAX)
+		return -1;
+
+	i = ev->nenv;
+	ev->env_key[i] = strdup(key);
+	ev->env_val[i] = strdup(val);
+	if (!ev->env_key[i] || !ev->env_val[i]) {
+		free(ev->env_key[i]);
+		free(ev->env_val[i]);
+		return -1;
+	}
+	ev->env_key_alloc[i] = 1;
+	ev->env_val_alloc[i] = 1;
+	ev->nenv++;
+	return 0;
+}
+
+void rule_ctx_free(struct rule_ctx *ctx)
+{
+	int i;
+
+	free(ctx->name);
+	ctx->name = NULL;
+
+	for (i = 0; i < ctx->nsymlinks; i++) {
+		free(ctx->symlinks[i]);
+		ctx->symlinks[i] = NULL;
+	}
+	ctx->nsymlinks = 0;
+
+	for (i = 0; i < ctx->nruncmds; i++) {
+		free(ctx->run_cmds[i]);
+		ctx->run_cmds[i] = NULL;
+	}
+	ctx->nruncmds = 0;
+}
+
+void uevent_env_free(struct uevent *ev)
+{
+	int i;
+
+	for (i = 0; i < ev->nenv; i++) {
+		if (ev->env_key_alloc[i])
+			free(ev->env_key[i]);
+		if (ev->env_val_alloc[i])
+			free(ev->env_val[i]);
+	}
+	ev->nenv = 0;
+
+	free(ev->result);
+	ev->result = NULL;
+
+	for (i = 0; i < ev->ntags; i++)
+		free(ev->tags[i]);
+	ev->ntags = 0;
+
+	rule_ctx_free(&ev->applied);
 }
 
 static struct devrule *find_rule(struct uevent *ev)
@@ -308,6 +432,7 @@ int devnode_add(struct uevent *ev)
 {
 	struct devrule *rule;
 	char path[PATH_MAX];
+	const char *devname;
 	char *dir;
 	mode_t mode;
 	dev_t dev;
@@ -316,7 +441,9 @@ int devnode_add(struct uevent *ev)
 	if (!ev->devname || ev->major < 0 || ev->minor < 0)
 		return -1;
 
-	snprintf(path, sizeof(path), "/dev/%s", ev->devname);
+	/* NAME= in a rule overrides the kernel-supplied device name */
+	devname = ev->applied.name ?: ev->devname;
+	snprintf(path, sizeof(path), "/dev/%s", devname);
 
 	/* Create parent directories if needed (e.g., /dev/input/) */
 	dir = strdupa(path);
@@ -329,10 +456,10 @@ int devnode_add(struct uevent *ev)
 		}
 	}
 
-	/* Find matching rule for permissions */
+	/* Built-in table provides defaults; rules engine may override */
 	rule = find_rule(ev);
-	mode = rule->mode;
-	dev = makedev(ev->major, ev->minor);
+	mode = ev->applied.has_mode  ? ev->applied.mode : rule->mode;
+	dev  = makedev(ev->major, ev->minor);
 
 	/* Remove existing node if present */
 	unlink(path);
@@ -355,14 +482,19 @@ int devnode_add(struct uevent *ev)
 		logit(LOG_WARNING, "Failed chmod %s: %s", path, strerror(errno));
 
 	/* Set ownership */
-	if (chown(path, rule->uid, rule->gid))
-		logit(LOG_WARNING, "Failed chown %s: %s", path, strerror(errno));
+	{
+		uid_t uid = ev->applied.has_owner ? ev->applied.uid : rule->uid;
+		gid_t gid = ev->applied.has_group ? ev->applied.gid : rule->gid;
+
+		if (chown(path, uid, gid))
+			logit(LOG_WARNING, "Failed chown %s: %s", path, strerror(errno));
+	}
 
 	logit(LOG_DEBUG, "Created %s (%d:%d) mode %04o",
-	      path, ev->major, ev->minor, rule->mode);
+	      path, ev->major, ev->minor, mode & ~S_IFMT);
 
-	/* Set dev/ condition */
-	dev_cond(ev->devname, 1);
+	/* Set dev/ condition using the actual node name */
+	dev_cond(devname, 1);
 
 	return 0;
 }
@@ -372,15 +504,18 @@ int devnode_add(struct uevent *ev)
  */
 int devnode_del(struct uevent *ev)
 {
+	const char *devname;
 	char path[PATH_MAX];
 
 	if (!ev->devname)
 		return -1;
 
-	snprintf(path, sizeof(path), "/dev/%s", ev->devname);
+	/* Mirror devnode_add: NAME= overrides the kernel-supplied name */
+	devname = ev->applied.name ?: ev->devname;
+	snprintf(path, sizeof(path), "/dev/%s", devname);
 
 	/* Clear dev/ condition first */
-	dev_cond(ev->devname, 0);
+	dev_cond(devname, 0);
 
 	if (unlink(path) && errno != ENOENT) {
 		logit(LOG_WARNING, "Failed removing %s: %s", path, strerror(errno));
@@ -388,6 +523,53 @@ int devnode_del(struct uevent *ev)
 	}
 
 	logit(LOG_DEBUG, "Removed %s", path);
+	return 0;
+}
+
+/*
+ * Handle network interface add: rename if NAME= was set by a rule, then
+ * set the dev/ condition so Finit services can depend on the interface.
+ *
+ * The interface must be DOWN for SIOCSIFNAME to succeed.  Freshly added
+ * interfaces always are, so we do not attempt to bring the link down.
+ */
+int netdev_add(struct uevent *ev)
+{
+	const char *new_name;
+
+	if (!ev->devname)
+		return -1;
+
+	new_name = ev->applied.name;
+
+	if (new_name && strcmp(ev->devname, new_name)) {
+		struct ifreq ifr;
+		int sock, rc;
+
+		sock = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+		if (sock < 0) {
+			logit(LOG_WARNING, "Cannot open socket for netif rename: %s",
+			      strerror(errno));
+			goto cond;
+		}
+
+		memset(&ifr, 0, sizeof(ifr));
+		strncpy(ifr.ifr_name,    ev->devname, IFNAMSIZ - 1);
+		strncpy(ifr.ifr_newname, new_name,    IFNAMSIZ - 1);
+
+		rc = ioctl(sock, SIOCSIFNAME, &ifr);
+		close(sock);
+
+		if (rc < 0)
+			logit(LOG_WARNING, "Failed renaming %s -> %s: %s",
+			      ev->devname, new_name, strerror(errno));
+		else
+			logit(LOG_NOTICE, "Renamed interface %s -> %s",
+			      ev->devname, new_name);
+	}
+
+cond:
+	dev_cond(new_name ?: ev->devname, 1);
 	return 0;
 }
 
@@ -625,18 +807,72 @@ static int symlink_add_input(struct uevent *ev)
 }
 
 /*
- * Create appropriate symlinks based on device subsystem.
+ * Write S: symlink records for a device into an already-open database file.
+ * Called by udevdb_write() when building the per-device database entry.
+ */
+void symlink_write_db(const char *devpath, FILE *fp)
+{
+	struct dev_symlink *sl;
+
+	TAILQ_FOREACH(sl, &symlinks, link) {
+		if (strcmp(sl->devpath, devpath))
+			continue;
+		/* Store path relative to /dev/ */
+		const char *rel = sl->linkpath;
+		if (!strncmp(rel, "/dev/", 5))
+			rel += 5;
+		fprintf(fp, "S:%s\n", rel);
+	}
+}
+
+/*
+ * Create appropriate symlinks based on device subsystem and rules.
  */
 int symlink_add(struct uevent *ev)
 {
-	if (!ev->subsystem)
-		return 0;
+	int i;
 
-	if (!strcmp(ev->subsystem, "block"))
-		return symlink_add_disk(ev);
+	/* Built-in subsystem symlinks */
+	if (ev->subsystem) {
+		if (!strcmp(ev->subsystem, "block"))
+			symlink_add_disk(ev);
+		else if (!strcmp(ev->subsystem, "input"))
+			symlink_add_input(ev);
+	}
 
-	if (!strcmp(ev->subsystem, "input"))
-		return symlink_add_input(ev);
+	/* SYMLINK+= from matched rules */
+	for (i = 0; i < ev->applied.nsymlinks; i++) {
+		const char *devname, *sl;
+		char link[PATH_MAX], target[PATH_MAX];
+		size_t toff = 0;
+		int depth = 0;
+		const char *p;
+
+		sl = ev->applied.symlinks[i];
+		if (!sl || !*sl)
+			continue;
+
+		devname = ev->applied.name ?: ev->devname;
+		if (!devname)
+			continue;
+
+		/* basename of devname for the symlink target */
+		const char *base = strrchr(devname, '/');
+		base = base ? base + 1 : devname;
+
+		/* Count '/' in symlink path to determine relative depth */
+		for (p = sl; *p; p++)
+			if (*p == '/')
+				depth++;
+
+		target[0] = 0;
+		for (int d = 0; d < depth; d++)
+			toff += snprintf(target + toff, sizeof(target) - toff, "../");
+		snprintf(target + toff, sizeof(target) - toff, "%s", base);
+
+		snprintf(link, sizeof(link), "/dev/%s", sl);
+		symlink_create(target, link, ev->devpath ?: "");
+	}
 
 	return 0;
 }
