@@ -15,9 +15,22 @@ make -C "$top_builddir" DESTDIR="$SYSROOT" install
 
 mkdir -p "$SYSROOT/sbin/"
 cp "$top_builddir/test/src/serv" "$SYSROOT/sbin/"
+if [ -x "$top_builddir/test/src/dbus-auth-client" ]; then
+    cp "$top_builddir/test/src/dbus-auth-client" "$SYSROOT/sbin/"
+fi
 
 # shellcheck disable=SC2154
-FINITBIN="$(pwd)/$top_builddir/src/finit" DEST="$SYSROOT" make -f "$srcdir/lib/sysroot.mk"
+# Prefer the real ELF in .libs/ over the libtool wrapper script at
+# $top_builddir/src/finit.  Libtool generates a shell wrapper when
+# the binary depends on an in-tree convenience library (e.g. libink),
+# and `ldd <wrapper>` returns "not a dynamic executable", which
+# silently makes sysroot.mk copy zero host libs into the sysroot.
+if [ -f "$top_builddir/src/.libs/finit" ]; then
+    finitbin_for_ldd="$(pwd)/$top_builddir/src/.libs/finit"
+else
+    finitbin_for_ldd="$(pwd)/$top_builddir/src/finit"
+fi
+FINITBIN="$finitbin_for_ldd" DEST="$SYSROOT" make -f "$srcdir/lib/sysroot.mk"
 
 # Drop plugins we don't need in test, only causes confusing FAIL in logs.
 for plugin in tty.so urandom.so rtc.so modprobe.so; do

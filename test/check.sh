@@ -25,8 +25,8 @@ if [ "$run_make" -eq 1 ]; then
 fi
 
 ./configure --prefix=/usr --exec-prefix= --sysconfdir=/etc --localstatedir=/var	\
-	    --enable-x11-common-plugin --enable-testserv-plugin --with-watchdog \
-            --with-keventd --with-libsystemd                                    \
+	    --enable-dbus --enable-x11-common-plugin --enable-testserv-plugin   \
+	    --with-watchdog --with-keventd --with-libsystemd                    \
 	    CFLAGS='-fsanitize=address -ggdb'
 
 if [ "$run_make" -eq 1 ]; then

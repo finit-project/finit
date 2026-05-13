@@ -45,6 +45,11 @@ extern uev_ctx_t *ctx;
 
 int          api_init         (uev_ctx_t *ctx);
 int          api_exit         (void);
+
+#ifdef HAVE_DBUS
+int          dbus_init        (uev_ctx_t *ctx);
+int          dbus_exit        (void);
+#endif
 void         conf_flush_events(void);
 
 void         service_monitor  (pid_t lost, int status);

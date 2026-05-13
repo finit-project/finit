@@ -1,0 +1,143 @@
+/* libink — listening socket, accept, peer-credential capture
+ *
+ * Copyright (c) 2026  Joachim Wiberg <troglobit@gmail.com>
+ * SPDX-License-Identifier: MIT
+ */
+
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include "ink-internal.h"
+
+static void close_save_errno(int fd)
+{
+	int saved = errno;
+	close(fd);
+	errno = saved;
+}
+
+int ink_server_new(ink_server_t **out, const char *path)
+{
+	struct sockaddr_un sun = { .sun_family = AF_UNIX };
+	ink_server_t *srv;
+	size_t plen;
+	int fd;
+
+	if (!out || !path || !*path) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	plen = strlen(path);
+	if (plen >= sizeof(sun.sun_path) || plen >= INK_PATH_MAX) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
+
+	srv = calloc(1, sizeof(*srv));
+	if (!srv)
+		return -1;
+
+	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	if (fd < 0)
+		goto err_free;
+
+	memcpy(sun.sun_path, path, plen + 1);
+
+	(void)unlink(path);
+
+	/* fchmod() on a Unix-domain socket fd is a silent no-op on Linux:
+	 * the file mode is fixed at bind() time as (0777 & ~umask).  Set
+	 * umask around the bind() so the socket appears with mode 0666
+	 * atomically, no race window.  World-accessible by design;
+	 * per-method authorization happens later in dispatch via
+	 * SO_PEERCRED. */
+	{
+		mode_t oldmask = umask(0111);
+		int    rc      = bind(fd, (struct sockaddr *)&sun, sizeof(sun));
+		int    saved   = errno;
+
+		umask(oldmask);
+		if (rc < 0) {
+			errno = saved;
+			goto err_close;
+		}
+	}
+
+	if (listen(fd, 16) < 0)
+		goto err_unlink;
+
+	srv->fd = fd;
+	memcpy(srv->path, path, plen + 1);
+	*out = srv;
+	return 0;
+
+err_unlink:
+	(void)unlink(path);
+err_close:
+	close_save_errno(fd);
+err_free:
+	free(srv);
+	return -1;
+}
+
+void ink_server_free(ink_server_t *srv)
+{
+	if (!srv)
+		return;
+
+	if (srv->fd >= 0)
+		close(srv->fd);
+	if (srv->path[0])
+		(void)unlink(srv->path);
+	free(srv);
+}
+
+int ink_server_get_fd(const ink_server_t *srv)
+{
+	if (!srv)
+		return -1;
+
+	return srv->fd;
+}
+
+int ink_server_accept(ink_server_t *srv, ink_connection_t **out)
+{
+	struct ucred cred = { 0 };
+	socklen_t credlen = sizeof(cred);
+	ink_connection_t *conn;
+	int cfd;
+
+	if (!srv || !out) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	cfd = accept4(srv->fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+	if (cfd < 0)
+		return -1;
+
+	conn = calloc(1, sizeof(*conn));
+	if (!conn) {
+		close_save_errno(cfd);
+		return -1;
+	}
+
+	conn->fd   = cfd;
+	conn->auth = INK_AUTH_NUL;
+
+	if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &cred, &credlen) == 0)
+		conn->peer_uid = cred.uid;
+	else
+		conn->peer_uid = (uid_t)-1;
+
+	ink__auth_generate_guid(conn->guid);
+
+	*out = conn;
+	return 0;
+}

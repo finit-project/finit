@@ -12,6 +12,7 @@ AC_CONFIG_FILES([Makefile
 	contrib/debian/Makefile contrib/debian/finit.d/Makefile contrib/debian/finit.d/available/Makefile
 	contrib/void/Makefile   contrib/void/finit.d/Makefile   contrib/void/finit.d/available/Makefile
 	doc/Makefile doc/config/Makefile
+	libink/Makefile libink/libink.pc
 	libsystemd/Makefile libsystemd/libsystemd.pc
 	man/Makefile
 	plugins/Makefile
@@ -93,6 +94,10 @@ AC_ARG_ENABLE(kernel_logging,
 AC_ARG_ENABLE(logrotate,
         AS_HELP_STRING([--disable-logrotate], [Disable built-in rotation of /var/log/wtmp]),,[
 	enable_logrotate=yes])
+
+AC_ARG_ENABLE(dbus,
+        AS_HELP_STRING([--disable-dbus], [Disable D-Bus support (libink + Finit object tree)]),,[
+	enable_dbus=yes])
 
 AC_ARG_ENABLE(doc,
         AS_HELP_STRING([--disable-doc], [Disable build and install of doc/ section]),,[
@@ -242,6 +247,10 @@ AS_IF([test "x$enable_rescue" != "xno"], [
 	AC_DEFINE([RESCUE_MODE], 1, [Define to enable support for rescue mode.])])
 
 AM_CONDITIONAL(LOGROTATE, [test "x$enable_logrotate" = "xyes"])
+
+AS_IF([test "x$enable_dbus" = "xyes"], [
+	AC_DEFINE(HAVE_DBUS, 1, [Build D-Bus support via libink])])
+AM_CONDITIONAL(DBUS, [test "x$enable_dbus" = "xyes"])
 
 ### With features ##############################################################################
 AS_IF([test "x$bash_dir" = "xyes"], [
@@ -438,6 +447,7 @@ Optional features:
   Built-in sulogin......: $with_sulogin $sulogin
   Built-in watchdogd....: $with_watchdog $watchdog
   Built-in logrotate....: $enable_logrotate
+  D-Bus support (libink): $enable_dbus
   Replacement libsystemd: $with_libsystemd
   Use cgroup v2.........: $enable_cgroup
   Use libcap............: $enable_libcap

@@ -81,6 +81,9 @@ finit_SOURCES      = api.c	cgroup.c	cgroup.h	\
 if LOGROTATE
 finit_SOURCES     += logrotate.c
 endif
+if DBUS
+finit_SOURCES     += dbus.c
+endif
 
 pkginclude_HEADERS = cgroup.h cond.h conf.h finit.h helpers.h log.h \
 		     plugin.h svc.h service.h
@@ -93,6 +96,10 @@ if STATIC
 finit_LDADD       += ../plugins/libplug.la
 else
 finit_LDADD       += -ldl
+endif
+if DBUS
+finit_CPPFLAGS    += -I$(top_srcdir)/libink
+finit_LDADD       += $(top_builddir)/libink/libink.la
 endif
 
 initctl_SOURCES    = initctl.c initctl.h cgutil.c cgutil.h		\

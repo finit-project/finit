@@ -71,6 +71,7 @@ EXTRA_DIST		+= start-stop-serv.sh
 EXTRA_DIST		+= signal-service.sh
 EXTRA_DIST		+= testserv.sh
 EXTRA_DIST		+= unexpected-restart.sh
+EXTRA_DIST		+= dbus-auth.sh
 
 AM_TESTS_ENVIRONMENT	 = SYSROOT='$(abs_builddir)/sysroot/';
 AM_TESTS_ENVIRONMENT	+= export SYSROOT;
@@ -126,6 +127,9 @@ if TESTSERV
 TESTS			+= testserv.sh
 endif
 TESTS			+= unexpected-restart.sh
+if DBUS
+TESTS			+= dbus-auth.sh
+endif
 
 check-recursive: setup-chroot
 

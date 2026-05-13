@@ -7,3 +7,8 @@ serv_CPPFLAGS  += -I$(top_srcdir)/libsystemd $(lite_CFLAGS)
 serv_SOURCES   += $(top_srcdir)/libsystemd/sd-daemon.c
 serv_LDADD      = $(lite_LIBS)
 endif
+
+if DBUS
+noinst_PROGRAMS          += dbus-auth-client
+dbus_auth_client_SOURCES  = dbus-auth-client.c
+endif

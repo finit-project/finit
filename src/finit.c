@@ -780,6 +780,11 @@ int main(int argc, char *argv[])
 	dbg("Starting initctl API responder ...");
 	api_init(&loop);
 
+#ifdef HAVE_DBUS
+	dbg("Starting D-Bus listener ...");
+	dbus_init(&loop);
+#endif
+
 	dbg("Starting service interval monitor ...");
 	service_init(&loop);
 
