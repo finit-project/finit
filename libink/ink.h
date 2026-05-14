@@ -78,6 +78,21 @@ const char *ink_call_interface(const ink_call_t *call);
 const char *ink_call_member   (const ink_call_t *call);
 uid_t       ink_call_uid      (const ink_call_t *call);
 
+/* ----------  reading method-call arguments  ----------
+ *
+ * Cursor starts at the beginning of the request body.  Each
+ * function returns 0 on success and advances the cursor; on
+ * failure it returns -1 and leaves the cursor in an error state
+ * (subsequent reads also fail).  Strings reference the
+ * connection's rx buffer and are valid for the duration of the
+ * method handler. */
+
+int ink_call_read_byte  (ink_call_t *call, uint8_t  *out);
+int ink_call_read_bool  (ink_call_t *call, int      *out);
+int ink_call_read_u32   (ink_call_t *call, uint32_t *out);
+int ink_call_read_string(ink_call_t *call, const char **out);  /* "s" */
+int ink_call_read_path  (ink_call_t *call, const char **out);  /* "o" */
+
 /* ----------  reply construction  ---------- */
 
 /* Get the writer for the reply body, write args into it, return 0

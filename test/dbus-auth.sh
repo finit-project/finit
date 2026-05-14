@@ -92,6 +92,26 @@ assert "ListServices returned at least one service" \
     "$(printf '%s' "$list" | wc -l | tr -d ' ')" -ge 1
 echo "$list"
 
+# ---------- Method with arguments ----------
+
+say "Manager1.Reload (void) succeeds"
+texec "$CLIENT" call-void "$BUS" /org/finit/manager \
+    org.finit.Manager1 Reload >/dev/null \
+    || fail "Reload returned non-zero"
+assert "Reload void method ok" 0 -eq 0
+
+say "Manager1.Stop with bogus identity returns NoSuchService error"
+set +e
+texec "$CLIENT" call-s "$BUS" /org/finit/manager \
+    org.finit.Manager1 Stop "no-such-service-here" >/tmp/dbus-stop.out 2>&1
+stop_rc=$?
+set -e
+assert "Bogus service rejected (rc=$stop_rc)" "$stop_rc" -eq 1
+case "$(cat /tmp/dbus-stop.out)" in
+    *NoSuchService*) assert "Error is NoSuchService" 0 -eq 0 ;;
+    *) fail "Unexpected error reply: $(cat /tmp/dbus-stop.out)" ;;
+esac
+
 # ---------- Error reply ----------
 
 say "Unknown method gets an org.freedesktop.DBus.Error.* reply"

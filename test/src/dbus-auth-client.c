@@ -215,62 +215,118 @@ static void b_put_signature(struct buf *b, const char *s)
 	b->p[b->off++] = 0;
 }
 
+/* Send a method call with an optional argument.
+ *   arg_sig == NULL or ""    -> no body
+ *   arg_sig == "s"           -> arg_string used
+ *   arg_sig == "u"           -> arg_u32 used
+ */
+static int send_method_call_with_arg(int fd,
+				     const char *path,
+				     const char *interface,
+				     const char *member,
+				     const char *arg_sig,
+				     const char *arg_string,
+				     uint32_t    arg_u32);
+
 static int send_method_call(int fd,
 			    const char *path,
 			    const char *interface,
 			    const char *member)
 {
-	uint8_t  hdr[1024];
+	return send_method_call_with_arg(fd, path, interface, member,
+					 NULL, NULL, 0);
+}
+
+static int send_method_call_with_arg(int fd,
+				     const char *path,
+				     const char *interface,
+				     const char *member,
+				     const char *arg_sig,
+				     const char *arg_string,
+				     uint32_t    arg_u32)
+{
+	uint8_t  hdr[2048];
+	uint8_t  body[1024];
 	struct buf b = { .p = hdr, .cap = sizeof(hdr) };
+	struct buf bb = { .p = body, .cap = sizeof(body) };
 	size_t   fields_start, fields_end, padded_end;
+	uint32_t body_len = 0;
 
-	hdr[0] = 'l'; hdr[1] = 1; hdr[2] = 0; hdr[3] = 1;
-	b.off = 16;
-	b_put_u32(&b, 0); /* placeholder: body_len at offset 4 — actually we already wrote raw bytes above; rewrite */
+	/* Build body first so its length and the signature are known
+	 * before we write the header. */
+	if (arg_sig && *arg_sig) {
+		if (strcmp(arg_sig, "s") == 0) {
+			b_put_string(&bb, arg_string ? arg_string : "");
+		} else if (strcmp(arg_sig, "u") == 0) {
+			b_put_u32(&bb, arg_u32);
+		} else {
+			return -1;
+		}
+		if (bb.err) return -1;
+		body_len = (uint32_t)bb.off;
+	}
 
-	/* Restart: write the fixed header by hand. */
-	b.off = 0;
+	/* Fixed header */
 	memset(hdr, 0, 16);
 	hdr[0] = 'l';
 	hdr[1] = 1;          /* METHOD_CALL */
 	hdr[2] = 0;          /* flags */
 	hdr[3] = 1;          /* protocol */
-	/* body_len (4..8) = 0 */
-	hdr[8] = 1;          /* serial (4 bytes; little-endian 1) */
-	/* fields_len at 12..16 — patched later */
+	hdr[4] = (uint8_t)( body_len        & 0xff);
+	hdr[5] = (uint8_t)((body_len >>  8) & 0xff);
+	hdr[6] = (uint8_t)((body_len >> 16) & 0xff);
+	hdr[7] = (uint8_t)((body_len >> 24) & 0xff);
+	hdr[8] = 1;          /* serial */
 	b.off = 16;
 	fields_start = b.off;
 
-	/* PATH (code 1, type 'o') */
+	/* PATH */
 	b_reserve(&b, 8, 0);
 	b_put_byte(&b, 1);
 	b_put_signature(&b, "o");
 	b_put_string(&b, path);
 
 	if (interface) {
-		/* INTERFACE (code 2, type 's') */
 		b_reserve(&b, 8, 0);
 		b_put_byte(&b, 2);
 		b_put_signature(&b, "s");
 		b_put_string(&b, interface);
 	}
 
-	/* MEMBER (code 3, type 's') */
 	b_reserve(&b, 8, 0);
 	b_put_byte(&b, 3);
 	b_put_signature(&b, "s");
 	b_put_string(&b, member);
 
-	fields_end = b.off;
-	hdr[12] = (uint8_t)((fields_end - fields_start)       & 0xff);
-	hdr[13] = (uint8_t)(((fields_end - fields_start) >> 8) & 0xff);
+	if (arg_sig && *arg_sig) {
+		b_reserve(&b, 8, 0);
+		b_put_byte(&b, 8);
+		b_put_signature(&b, "g");
+		/* SIGNATURE wire form: 1-byte len, bytes, nul */
+		b_put_byte(&b, (uint8_t)strlen(arg_sig));
+		if (b.off + strlen(arg_sig) + 1 > b.cap) return -1;
+		memcpy(b.p + b.off, arg_sig, strlen(arg_sig));
+		b.off += strlen(arg_sig);
+		b.p[b.off++] = 0;
+	}
 
-	/* Pad header to 8-byte boundary; body is empty so we stop here. */
+	fields_end = b.off;
+	{
+		uint32_t flen = (uint32_t)(fields_end - fields_start);
+		hdr[12] = (uint8_t)( flen        & 0xff);
+		hdr[13] = (uint8_t)((flen >>  8) & 0xff);
+		hdr[14] = (uint8_t)((flen >> 16) & 0xff);
+		hdr[15] = (uint8_t)((flen >> 24) & 0xff);
+	}
+
 	padded_end = ALIGN_UP(fields_end, 8);
 	while (b.off < padded_end) hdr[b.off++] = 0;
 
 	if (b.err) return -1;
-	return write_all(fd, hdr, b.off);
+
+	if (write_all(fd, hdr, b.off) < 0) return -1;
+	if (body_len > 0 && write_all(fd, body, body_len) < 0) return -1;
+	return 0;
 }
 
 /* Read one D-Bus message header + body into msg/body buffers.
@@ -465,14 +521,16 @@ static int mode_auth(int argc, char *argv[])
 	return 2;
 }
 
-static int do_call(const char *path, const char *obj_path,
-		   const char *iface, const char *method,
-		   struct reply *r)
+static int do_call_arg(const char *path, const char *obj_path,
+		       const char *iface, const char *method,
+		       const char *arg_sig, const char *arg_string,
+		       uint32_t arg_u32, struct reply *r)
 {
 	int fd = connect_and_auth(path, getuid());
 
 	if (fd < 0) return 2;
-	if (send_method_call(fd, obj_path, iface, method) < 0) {
+	if (send_method_call_with_arg(fd, obj_path, iface, method,
+				      arg_sig, arg_string, arg_u32) < 0) {
 		fprintf(stderr, "send: %s\n", strerror(errno));
 		close(fd);
 		return 2;
@@ -488,6 +546,13 @@ static int do_call(const char *path, const char *obj_path,
 		return 1;
 	}
 	return 0;
+}
+
+static int do_call(const char *path, const char *obj_path,
+		   const char *iface, const char *method,
+		   struct reply *r)
+{
+	return do_call_arg(path, obj_path, iface, method, NULL, NULL, 0, r);
 }
 
 static int mode_hello(int argc, char *argv[])
@@ -532,6 +597,34 @@ static int mode_liststrings(int argc, char *argv[])
 	return 0;
 }
 
+/* call-s:    method taking one string arg, void/error reply.
+ * call-void: method taking no args, void/error reply. */
+static int mode_call_s(int argc, char *argv[])
+{
+	struct reply r;
+	int rc;
+
+	if (argc != 7) return 2;
+	rc = do_call_arg(argv[2], argv[3], argv[4], argv[5],
+			 "s", argv[6], 0, &r);
+	if (rc == 0)
+		printf("OK\n");
+	return rc;
+}
+
+static int mode_call_void(int argc, char *argv[])
+{
+	struct reply r;
+	int rc;
+
+	if (argc != 6) return 2;
+	rc = do_call_arg(argv[2], argv[3], argv[4], argv[5],
+			 NULL, NULL, 0, &r);
+	if (rc == 0)
+		printf("OK\n");
+	return rc;
+}
+
 static int mode_unknown(int argc, char *argv[])
 {
 	struct reply r;
@@ -554,6 +647,8 @@ int main(int argc, char *argv[])
 	if (strcmp(argv[1], "hello")       == 0) return mode_hello(argc, argv);
 	if (strcmp(argv[1], "introspect")  == 0) return mode_introspect(argc, argv);
 	if (strcmp(argv[1], "liststrings") == 0) return mode_liststrings(argc, argv);
+	if (strcmp(argv[1], "call-s")      == 0) return mode_call_s(argc, argv);
+	if (strcmp(argv[1], "call-void")   == 0) return mode_call_void(argc, argv);
 	if (strcmp(argv[1], "unknown")     == 0) return mode_unknown(argc, argv);
 	fprintf(stderr, "%s: unknown mode '%s'\n", argv[0], argv[1]);
 	return 2;

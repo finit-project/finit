@@ -171,7 +171,7 @@ static int child_segment(const char *parent, const char *child,
 
 static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
 {
-	char         xml[4096];
+	static char  xml[8192];	/* static keeps the stack small in PID 1 */
 	struct xbuf  x = { .buf = xml, .cap = sizeof(xml) };
 	struct ink_object *o;
 	const char  *path = m->path;

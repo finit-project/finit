@@ -216,6 +216,14 @@ int ink_call_reply_error(ink_call_t *call, const char *name, const char *message
 	return ink__send_error(call->conn, &call->incoming, name, message);
 }
 
+/* ----------  public reader wrappers  ---------- */
+
+int ink_call_read_byte  (ink_call_t *c, uint8_t *o)        { return ink__r_byte  (&c->read_cursor, o); }
+int ink_call_read_bool  (ink_call_t *c, int *o)            { return ink__r_bool  (&c->read_cursor, o); }
+int ink_call_read_u32   (ink_call_t *c, uint32_t *o)       { return ink__r_u32   (&c->read_cursor, o); }
+int ink_call_read_string(ink_call_t *c, const char **o)    { return ink__r_string(&c->read_cursor, o); }
+int ink_call_read_path  (ink_call_t *c, const char **o)    { return ink__r_path  (&c->read_cursor, o); }
+
 /* ----------  public writer wrappers  ---------- */
 
 void ink_w_byte    (ink_writer_t *w, uint8_t v)        { ink__w_byte(w, v); }
@@ -287,6 +295,7 @@ int ink__dispatch_message(ink_connection_t *conn, const struct ink_msg *m)
 	memset(&call, 0, sizeof(call));
 	call.conn     = conn;
 	call.incoming = *m;
+	ink__r_init(&call.read_cursor, m->body, m->body_avail);
 
 	rc = meth->handler(&call, e->userdata);
 	if (rc < 0 && !call.reply_consumed && !call.error_sent) {

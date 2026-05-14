@@ -56,16 +56,13 @@ struct ink_call {
 	ink_connection_t *conn;
 	struct ink_msg    incoming;	/* parsed view of the request */
 
-	/* Reply scratch area.  Header is built into reply_header_buf
-	 * after the body is finished (because body length is part of
-	 * the header).  Body is written into a separate buffer the
-	 * caller marshals into via ink_w_*. */
+	struct ink_reader read_cursor;	/* over incoming.body */
+
 	struct ink_writer reply_writer;
 	uint8_t           reply_body[INK_TX_BUF_SIZE - 512];
-	uint8_t           reply_header[512];
 
-	int               reply_consumed;	/* 0/1 — ink_call_reply called */
-	int               error_sent;		/* 0/1 — error reply done */
+	int               reply_consumed;
+	int               error_sent;
 };
 
 struct ink_connection {

@@ -166,3 +166,95 @@ void ink__w_struct_end(struct ink_writer *w)
 {
 	(void)w;
 }
+
+/* ---- reader ---- */
+
+void ink__r_init(struct ink_reader *r, const uint8_t *body, size_t len)
+{
+	r->base = body;
+	r->off  = 0;
+	r->cap  = len;
+	r->err  = 0;
+}
+
+static int r_skip_align(struct ink_reader *r, size_t align)
+{
+	size_t pad;
+
+	if (r->err)
+		return -1;
+	pad = ALIGN_UP(r->off, align) - r->off;
+	if (r->off + pad > r->cap) {
+		r->err = 1;
+		return -1;
+	}
+	r->off += pad;
+	return 0;
+}
+
+static uint32_t rd_u32(const uint8_t *p)
+{
+	return (uint32_t)p[0]
+	     | ((uint32_t)p[1] << 8)
+	     | ((uint32_t)p[2] << 16)
+	     | ((uint32_t)p[3] << 24);
+}
+
+int ink__r_byte(struct ink_reader *r, uint8_t *out)
+{
+	if (r_skip_align(r, 1) < 0 || r->off + 1 > r->cap) {
+		r->err = 1;
+		return -1;
+	}
+	*out = r->base[r->off++];
+	return 0;
+}
+
+int ink__r_u32(struct ink_reader *r, uint32_t *out)
+{
+	if (r_skip_align(r, 4) < 0 || r->off + 4 > r->cap) {
+		r->err = 1;
+		return -1;
+	}
+	*out = rd_u32(r->base + r->off);
+	r->off += 4;
+	return 0;
+}
+
+int ink__r_bool(struct ink_reader *r, int *out)
+{
+	uint32_t v;
+
+	if (ink__r_u32(r, &v) < 0)
+		return -1;
+	*out = v ? 1 : 0;
+	return 0;
+}
+
+static int read_string_like(struct ink_reader *r, const char **out)
+{
+	uint32_t len;
+
+	if (ink__r_u32(r, &len) < 0)
+		return -1;
+	if (r->off + (size_t)len + 1 > r->cap) {
+		r->err = 1;
+		return -1;
+	}
+	/* Spec requires nul terminator at base[off + len]. */
+	if (r->base[r->off + len] != 0) {
+		r->err = 1;
+		return -1;
+	}
+	*out = (const char *)(r->base + r->off);
+	r->off += (size_t)len + 1;
+	return 0;
+}
+
+int ink__r_string(struct ink_reader *r, const char **out) { return read_string_like(r, out); }
+int ink__r_path  (struct ink_reader *r, const char **out) { return read_string_like(r, out); }
+
+int ink__r_done(const struct ink_reader *r)
+{
+	return !r->err && r->off == r->cap;
+}

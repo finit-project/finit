@@ -39,8 +39,12 @@
 #include "ink.h"
 
 #include "finit.h"
+#include "conf.h"
 #include "log.h"
+#include "private.h"
 #include "service.h"
+#include "sig.h"
+#include "sm.h"
 #include "svc.h"
 
 #define DBUS_MAX_PEERS 64
@@ -150,9 +154,171 @@ static int manager_list_services(ink_call_t *call, void *userdata)
 	return 0;
 }
 
+/* Service-control helpers used by Start/Stop/Restart/Reload.  These
+ * mirror the static helpers in api.c — kept private here so api.c
+ * stays untouched in this increment. */
+
+static int dbus_apply_stop(svc_t *svc, void *user_data)
+{
+	(void)user_data;
+	if (!svc)
+		return 1;
+	service_timeout_cancel(svc);
+	svc_stop(svc);
+	service_step(svc);
+	if (!IS_RESERVED_RUNLEVEL(runlevel))
+		service_step_all(SVC_TYPE_ANY);
+	return 0;
+}
+
+static int dbus_apply_start(svc_t *svc, void *user_data)
+{
+	(void)user_data;
+	if (!svc)
+		return 1;
+	service_timeout_cancel(svc);
+	svc_start(svc);
+	service_step(svc);
+	if (!IS_RESERVED_RUNLEVEL(runlevel))
+		service_step_all(SVC_TYPE_ANY);
+	return 0;
+}
+
+static int dbus_apply_restart(svc_t *svc, void *user_data)
+{
+	if (!svc)
+		return 1;
+	if (!svc_is_running(svc))
+		return dbus_apply_start(svc, user_data);
+	service_timeout_cancel(svc);
+	service_stop(svc);
+	service_step(svc);
+	return 0;
+}
+
+struct dispatch_ctx {
+	int (*action)(svc_t *, void *);
+	int   matched;
+};
+
+static int dispatch_found(svc_t *svc, void *udata)
+{
+	struct dispatch_ctx *ctx = udata;
+
+	ctx->matched++;
+	return ctx->action(svc, NULL);
+}
+
+static int dispatch_missing(char *job, char *id, void *udata)
+{
+	(void)job; (void)id; (void)udata;
+	return 0;	/* don't penalise the return; we'll check ->matched */
+}
+
+/* Apply `action` to every service matched by `ident`.  Returns 0 if
+ * at least one service matched and the action succeeded on all;
+ * -1 if no service matched the identity (caller sends NoSuchService). */
+static int dispatch_action(const char *ident,
+			   int (*action)(svc_t *, void *))
+{
+	char buf[MAX_IDENT_LEN];
+	struct dispatch_ctx ctx = { .action = action };
+	int rc;
+
+	if (!ident || !*ident || strlen(ident) >= sizeof(buf))
+		return -1;
+	memcpy(buf, ident, strlen(ident) + 1);
+	rc = svc_parse_jobstr(buf, sizeof(buf), &ctx,
+			      dispatch_found, dispatch_missing);
+	if (ctx.matched == 0)
+		return -1;
+	return rc;
+}
+
+static int manager_take_string_method(ink_call_t *call,
+				      int (*action)(svc_t *, void *))
+{
+	const char *ident;
+
+	if (ink_call_read_string(call, &ident) < 0)
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"expected (s)");
+	if (dispatch_action(ident, action) != 0)
+		return ink_call_reply_error(call,
+			"org.finit.Error.NoSuchService", ident);
+
+	(void)ink_call_reply(call);	/* empty reply */
+	return 0;
+}
+
+static int manager_start  (ink_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_start);   }
+static int manager_stop   (ink_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_stop);    }
+static int manager_restart(ink_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_restart); }
+
+static int manager_reload(ink_call_t *call, void *userdata)
+{
+	(void)userdata;
+	/*
+	 * Same semantics as api.c: harmless no-op during bootstrap
+	 * and shutdown, the client still sees success.
+	 */
+	if (IS_RESERVED_RUNLEVEL(runlevel))
+		warnx("Ignoring reload in runlevel S and 6/0.");
+	else
+		sm_reload();
+	(void)ink_call_reply(call);
+	return 0;
+}
+
+static int manager_set_runlevel(ink_call_t *call, void *userdata)
+{
+	uint32_t lvl;
+
+	(void)userdata;
+	if (ink_call_read_u32(call, &lvl) < 0)
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"expected (u)");
+	if (lvl > 9 || lvl == INIT_LEVEL)
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"runlevel must be 0-9 (excluding internal levels)");
+
+	if (lvl == 0) halt = SHUT_OFF;
+	if (lvl == 6) halt = SHUT_REBOOT;
+	sm_runlevel((int)lvl);
+
+	(void)ink_call_reply(call);
+	return 0;
+}
+
+static int dbus_shutdown(ink_call_t *call, shutop_t target, int level)
+{
+	if (IS_RESERVED_RUNLEVEL(runlevel))
+		return ink_call_reply_error(call,
+			"org.finit.Error.WrongRunlevel",
+			"Already in shutdown");
+	halt = target;
+	sm_runlevel(level);
+	(void)ink_call_reply(call);
+	return 0;
+}
+
+static int manager_reboot  (ink_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_REBOOT, 6); }
+static int manager_poweroff(ink_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_OFF,    0); }
+static int manager_halt    (ink_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_HALT,   0); }
+
 static const ink_method_t manager_methods[] = {
-	{ .name = "ListServices", .in_sig = "", .out_sig = "as",
-	  .handler = manager_list_services },
+	{ .name = "ListServices", .in_sig = "",  .out_sig = "as", .handler = manager_list_services },
+	{ .name = "Start",        .in_sig = "s", .out_sig = "",   .handler = manager_start         },
+	{ .name = "Stop",         .in_sig = "s", .out_sig = "",   .handler = manager_stop          },
+	{ .name = "Restart",      .in_sig = "s", .out_sig = "",   .handler = manager_restart       },
+	{ .name = "Reload",       .in_sig = "",  .out_sig = "",   .handler = manager_reload        },
+	{ .name = "SetRunlevel",  .in_sig = "u", .out_sig = "",   .handler = manager_set_runlevel  },
+	{ .name = "Reboot",       .in_sig = "",  .out_sig = "",   .handler = manager_reboot        },
+	{ .name = "Poweroff",     .in_sig = "",  .out_sig = "",   .handler = manager_poweroff      },
+	{ .name = "Halt",         .in_sig = "",  .out_sig = "",   .handler = manager_halt          },
 	{ NULL, NULL, NULL, NULL }
 };
 

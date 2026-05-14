@@ -44,4 +44,25 @@ void ink__w_array_end   (struct ink_writer *w);
 void ink__w_struct_begin(struct ink_writer *w);
 void ink__w_struct_end  (struct ink_writer *w);
 
+/* ---- reader ----
+ *
+ * Reads from a message body pointer + length, advancing a cursor.
+ * String pointers returned by ink__r_string reference the input
+ * buffer and are valid for the lifetime of that buffer (i.e. for
+ * the duration of the current call dispatch). */
+struct ink_reader {
+	const uint8_t *base;
+	size_t         off;
+	size_t         cap;
+	int            err;	/* sticky */
+};
+
+void ink__r_init  (struct ink_reader *r, const uint8_t *body, size_t len);
+int  ink__r_byte  (struct ink_reader *r, uint8_t *out);
+int  ink__r_bool  (struct ink_reader *r, int      *out);
+int  ink__r_u32   (struct ink_reader *r, uint32_t *out);
+int  ink__r_string(struct ink_reader *r, const char **out);  /* "s" */
+int  ink__r_path  (struct ink_reader *r, const char **out);  /* "o" */
+int  ink__r_done  (const struct ink_reader *r);
+
 #endif /* LIBINK_MARSHAL_H_ */
