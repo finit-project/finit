@@ -23,7 +23,7 @@ typedef enum {
 #define INK_PATH_MAX          108
 #define INK_AUTH_LINEBUF_SIZE 256
 #define INK_RX_BUF_SIZE       (64 * 1024)
-#define INK_TX_BUF_SIZE       (64 * 1024)
+#define INK_TX_BUF_SIZE       (16 * 1024)
 #define INK_UNIQUE_NAME_LEN   16
 
 /* Per-vtable record attached to an object's interface list. */
@@ -51,16 +51,17 @@ struct ink_server {
 	uint32_t                  next_unique_id;	/* for ":1.N" names */
 };
 
-/* The reply being assembled inside a method handler. */
+/* The reply being assembled inside a method handler.
+ *
+ * The reply body lives in conn->txbuf, not on this struct, so a
+ * stack-allocated ink_call (in dispatch) stays small.  Sharing the
+ * connection's txbuf is safe: the event loop is single-threaded and
+ * a connection only ever has one in-flight method call at a time. */
 struct ink_call {
 	ink_connection_t *conn;
-	struct ink_msg    incoming;	/* parsed view of the request */
-
-	struct ink_reader read_cursor;	/* over incoming.body */
-
-	struct ink_writer reply_writer;
-	uint8_t           reply_body[INK_TX_BUF_SIZE - 512];
-
+	struct ink_msg    incoming;
+	struct ink_reader read_cursor;
+	struct ink_writer reply_writer;	/* writes into conn->txbuf */
 	int               reply_consumed;
 	int               error_sent;
 };
@@ -78,6 +79,12 @@ struct ink_connection {
 
 	uint8_t             rxbuf[INK_RX_BUF_SIZE];
 	size_t              rxlen;
+
+	/* Scratch for outgoing reply bodies.  Shared by the dispatch
+	 * path (writes through call.reply_writer) and built-in handlers
+	 * (send_string_reply).  Lifetime ends with each send_method_*
+	 * call. */
+	uint8_t             txbuf[INK_TX_BUF_SIZE];
 
 	uint32_t            next_serial;
 

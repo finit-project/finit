@@ -31,18 +31,17 @@ static int member_is(const struct ink_msg *m, const char *iface, const char *mem
 static int send_string_reply(ink_connection_t *conn, const struct ink_msg *req,
 			     const char *s)
 {
-	uint8_t            body[INK_TX_BUF_SIZE - 512];
-	struct ink_writer  w;
-	ssize_t            blen;
+	struct ink_writer w;
+	ssize_t           blen;
 
-	ink__w_init(&w, body, sizeof(body));
+	ink__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
 	ink__w_string(&w, s);
 	blen = ink__w_finish(&w);
 	if (blen < 0) {
 		errno = EMSGSIZE;
 		return -1;
 	}
-	return ink__send_method_return(conn, req, "s", body, (size_t)blen);
+	return ink__send_method_return(conn, req, "s", conn->txbuf, (size_t)blen);
 }
 
 /* ---------- Hello ---------- */
@@ -118,13 +117,11 @@ static void emit_method(struct xbuf *x, const ink_method_t *m)
 	xprintf(x, "    </method>\n");
 }
 
-/* The user-side input/output signatures are flat strings ("ss",
- * "a(ss)" etc.).  The introspection emit above prints one <arg>
- * per top-level type.  For complex types like "a(soss)" each
- * character produces an <arg>, which is wrong for `(` `)` `{`
- * `}` `a` — but it's good enough for the simple "s", "u", "as"
- * signatures we expose right now, and we can refine later when
- * complex types appear. */
+/* Introspection limitation: emit_method prints one <arg> per
+ * character of the signature, which is wrong for compound types
+ * (an "a(ss)" arg appears as four args).  Good enough for the
+ * "s", "u", "as" signatures we expose today; replace with a
+ * signature parser when the first compound argument lands. */
 
 static const char STANDARD_INTERFACES_XML[] =
 	"  <interface name=\"org.freedesktop.DBus.Introspectable\">\n"

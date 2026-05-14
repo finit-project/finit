@@ -89,12 +89,11 @@ err_free:
 
 void ink_server_free(ink_server_t *srv)
 {
-	struct ink_object *o, *otmp = NULL;
+	struct ink_object *o;
 
 	if (!srv)
 		return;
 
-	(void)otmp;	/* unused now */
 	o = TAILQ_FIRST(&srv->objects);
 	while (o) {
 		struct ink_object       *next_o = TAILQ_NEXT(o, link);

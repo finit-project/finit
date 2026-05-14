@@ -202,7 +202,8 @@ ink_writer_t *ink_call_reply(ink_call_t *call)
 	if (!call || call->reply_consumed || call->error_sent)
 		return NULL;
 	call->reply_consumed = 1;
-	ink__w_init(&call->reply_writer, call->reply_body, sizeof(call->reply_body));
+	ink__w_init(&call->reply_writer,
+		    call->conn->txbuf, sizeof(call->conn->txbuf));
 	return &call->reply_writer;
 }
 
@@ -275,9 +276,7 @@ int ink__dispatch_message(ink_connection_t *conn, const struct ink_msg *m)
 	meth = resolve(o, m->interface, m->member, &e);
 	if (!meth) {
 		return ink__send_error(conn, m,
-			m->interface
-			    ? "org.freedesktop.DBus.Error.UnknownMethod"
-			    : "org.freedesktop.DBus.Error.UnknownMethod",
+			"org.freedesktop.DBus.Error.UnknownMethod",
 			"No such method on this object");
 	}
 
@@ -320,7 +319,7 @@ int ink__dispatch_message(ink_connection_t *conn, const struct ink_msg *m)
 				"org.freedesktop.DBus.Error.Failed",
 				"Reply marshalling overflow");
 		return ink__send_method_return(conn, m, meth->out_sig,
-					       call.reply_body, (size_t)blen);
+					       conn->txbuf, (size_t)blen);
 	}
 
 	return 0;

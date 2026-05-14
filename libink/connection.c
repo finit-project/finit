@@ -67,16 +67,32 @@ int ink_connection_process(ink_connection_t *conn)
 	if (conn->auth == INK_AUTH_FAILED)
 		return -1;
 
-	if (conn->auth != INK_AUTH_DONE)
-		return ink__auth_process(conn);
+	if (conn->auth != INK_AUTH_DONE) {
+		if (ink__auth_process(conn) < 0)
+			return -1;
 
-	/* Authenticated: read into rxbuf and dispatch any complete messages. */
+		/* Still in SASL phase — wait for more bytes. */
+		if (conn->auth != INK_AUTH_DONE)
+			return 0;
+
+		/* Fall through: BEGIN may have arrived in the same read
+		 * as the first binary message.  auth_process moved those
+		 * bytes into rxbuf; they must be dispatched now, because
+		 * no further wake-up is guaranteed (the kernel has
+		 * already delivered everything that was readable). */
+		if (process_binary(conn) < 0)
+			return -1;
+	}
+
+	/* Read additional bytes and dispatch any complete messages.
+	 * process_binary is called inside the loop after every
+	 * successful read; no second call after EAGAIN because the
+	 * buffer hasn't changed. */
 	for (;;) {
 		ssize_t n;
 		size_t  room = sizeof(conn->rxbuf) - conn->rxlen;
 
 		if (room == 0) {
-			/* Pathological message size; drop the peer. */
 			errno = E2BIG;
 			return -1;
 		}
@@ -88,14 +104,11 @@ int ink_connection_process(ink_connection_t *conn)
 			if (errno == EINTR)
 				continue;
 			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;
+				return 0;
 			return -1;
 		}
 		conn->rxlen += (size_t)n;
 		if (process_binary(conn) < 0)
 			return -1;
-		/* Loop again — there may be more readable bytes. */
 	}
-
-	return process_binary(conn);
 }
