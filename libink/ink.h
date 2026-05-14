@@ -32,29 +32,76 @@ extern "C" {
 
 typedef struct ink_server     ink_server_t;
 typedef struct ink_connection ink_connection_t;
+typedef struct ink_call       ink_call_t;
+typedef struct ink_writer     ink_writer_t;
 
-/* Server lifecycle.  path is the AF_UNIX socket pathname to bind. */
+/* ----------  server / connection lifecycle  ---------- */
+
 int   ink_server_new   (ink_server_t **server, const char *path);
 void  ink_server_free  (ink_server_t  *server);
 int   ink_server_get_fd(const ink_server_t *server);
 
-/* Accept a pending connection from the listening socket.  On success
- * returns 0 and stores a new connection in *conn.  Returns -1 with
- * errno set if accept() failed or memory could not be allocated.
- * Callers should use ink_connection_get_fd() to register the new
- * connection with their event loop. */
 int   ink_server_accept(ink_server_t *server, ink_connection_t **conn);
 
-/* Per-connection. */
-int   ink_connection_get_fd (const ink_connection_t *conn);
-uid_t ink_connection_get_uid(const ink_connection_t *conn);
+int   ink_connection_get_fd  (const ink_connection_t *conn);
+uid_t ink_connection_get_uid (const ink_connection_t *conn);
+int   ink_connection_process (ink_connection_t *conn);
+void  ink_connection_close   (ink_connection_t *conn);
 
-/* Drive the connection state machine when its fd is readable.  Returns
- * 0 on success (keep watching), -1 on error or peer close (caller
- * should drop the connection via ink_connection_close()). */
-int   ink_connection_process(ink_connection_t *conn);
+/* ----------  object registration  ---------- */
 
-void  ink_connection_close  (ink_connection_t *conn);
+typedef int (*ink_method_fn)(ink_call_t *call, void *userdata);
+
+typedef struct {
+	const char    *name;     /* member name */
+	const char    *in_sig;   /* input  signature (D-Bus, e.g. "" or "s") */
+	const char    *out_sig;  /* output signature */
+	ink_method_fn  handler;
+} ink_method_t;
+
+typedef struct {
+	const char         *interface;          /* e.g. "org.finit.Manager1" */
+	const ink_method_t *methods;            /* terminated by {NULL, ...} */
+} ink_vtable_t;
+
+/* Register one (interface, methods) at `path`.  Calling repeatedly
+ * with the same path and different vtables adds more interfaces at
+ * that object.  The vtable pointer must outlive the server (typically
+ * a static table). */
+int ink_server_add_object(ink_server_t *server, const char *path,
+			  const ink_vtable_t *vt, void *userdata);
+
+/* ----------  call accessors  ---------- */
+
+const char *ink_call_path     (const ink_call_t *call);
+const char *ink_call_interface(const ink_call_t *call);
+const char *ink_call_member   (const ink_call_t *call);
+uid_t       ink_call_uid      (const ink_call_t *call);
+
+/* ----------  reply construction  ---------- */
+
+/* Get the writer for the reply body, write args into it, return 0
+ * from the handler.  Dispatch finalizes and sends the reply with
+ * the out_sig declared on the vtable.  May be called once per
+ * call. */
+ink_writer_t *ink_call_reply(ink_call_t *call);
+
+/* Send a D-Bus error reply.  `name` must be a valid D-Bus error
+ * name (e.g. "org.freedesktop.DBus.Error.UnknownMethod"); `message`
+ * may be NULL. */
+int ink_call_reply_error(ink_call_t *call, const char *name, const char *message);
+
+/* ----------  writer (mirrors the internal marshaller)  ---------- */
+
+void ink_w_byte    (ink_writer_t *w, uint8_t v);
+void ink_w_bool    (ink_writer_t *w, int v);
+void ink_w_u32     (ink_writer_t *w, uint32_t v);
+void ink_w_string  (ink_writer_t *w, const char *s);  /* "s" */
+void ink_w_path    (ink_writer_t *w, const char *s);  /* "o" */
+void ink_w_array_begin (ink_writer_t *w, char element_sig);
+void ink_w_array_end   (ink_writer_t *w);
+void ink_w_struct_begin(ink_writer_t *w);
+void ink_w_struct_end  (ink_writer_t *w);
 
 #ifdef __cplusplus
 }

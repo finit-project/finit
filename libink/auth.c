@@ -202,11 +202,6 @@ int ink__auth_process(ink_connection_t *conn)
 		conn->auth = INK_AUTH_LINE;
 	}
 
-	if (conn->auth == INK_AUTH_DONE) {
-		/* Post-BEGIN bytes are discarded until the marshaller lands. */
-		return 0;
-	}
-
 	if (conn->auth == INK_AUTH_LINE) {
 		size_t take = (size_t)n - off;
 		char line[INK_AUTH_LINEBUF_SIZE];
@@ -224,6 +219,18 @@ int ink__auth_process(ink_connection_t *conn)
 				return -1;
 			if (conn->auth != INK_AUTH_LINE)
 				break;
+		}
+
+		/* If BEGIN flipped us to DONE, any remaining linebuf bytes
+		 * are the first bytes of the binary D-Bus stream — move
+		 * them to rxbuf so the dispatcher can pick them up on the
+		 * next process() call. */
+		if (conn->auth == INK_AUTH_DONE && conn->linelen > 0) {
+			if (conn->linelen > sizeof(conn->rxbuf))
+				return -1;
+			memcpy(conn->rxbuf, conn->linebuf, conn->linelen);
+			conn->rxlen   = conn->linelen;
+			conn->linelen = 0;
 		}
 	}
 

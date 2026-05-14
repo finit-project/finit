@@ -42,6 +42,7 @@ int ink_server_new(ink_server_t **out, const char *path)
 	srv = calloc(1, sizeof(*srv));
 	if (!srv)
 		return -1;
+	TAILQ_INIT(&srv->objects);
 
 	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 	if (fd < 0)
@@ -88,8 +89,26 @@ err_free:
 
 void ink_server_free(ink_server_t *srv)
 {
+	struct ink_object *o, *otmp = NULL;
+
 	if (!srv)
 		return;
+
+	(void)otmp;	/* unused now */
+	o = TAILQ_FIRST(&srv->objects);
+	while (o) {
+		struct ink_object       *next_o = TAILQ_NEXT(o, link);
+		struct ink_vtable_entry *e      = TAILQ_FIRST(&o->vtables);
+
+		while (e) {
+			struct ink_vtable_entry *next_e = TAILQ_NEXT(e, link);
+
+			free(e);
+			e = next_e;
+		}
+		free(o);
+		o = next_o;
+	}
 
 	if (srv->fd >= 0)
 		close(srv->fd);
@@ -128,8 +147,9 @@ int ink_server_accept(ink_server_t *srv, ink_connection_t **out)
 		return -1;
 	}
 
-	conn->fd   = cfd;
-	conn->auth = INK_AUTH_NUL;
+	conn->fd     = cfd;
+	conn->auth   = INK_AUTH_NUL;
+	conn->server = srv;
 
 	if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &cred, &credlen) == 0)
 		conn->peer_uid = cred.uid;

@@ -1,0 +1,47 @@
+/* libink — D-Bus body marshalling (writer side).
+ *
+ * Copyright (c) 2026  Joachim Wiberg <troglobit@gmail.com>
+ * SPDX-License-Identifier: MIT
+ */
+#ifndef LIBINK_MARSHAL_H_
+#define LIBINK_MARSHAL_H_
+
+#include <stddef.h>
+#include <stdint.h>
+
+#define INK_WRITER_MAX_NESTING 8
+
+struct ink_writer {
+	uint8_t *buf;
+	size_t   cap;
+	size_t   off;
+	int      err;
+
+	/* Stack of open arrays, used to back-patch the length prefix
+	 * on array_end with the elements-only byte count. */
+	struct {
+		size_t lenpos;    /* offset of the u32 length */
+		size_t elemstart; /* offset of first element (post-padding) */
+	}      arrays[INK_WRITER_MAX_NESTING];
+	size_t array_depth;
+};
+
+void    ink__w_init  (struct ink_writer *w, uint8_t *buf, size_t cap);
+ssize_t ink__w_finish(struct ink_writer *w);
+
+void ink__w_byte    (struct ink_writer *w, uint8_t v);
+void ink__w_bool    (struct ink_writer *w, int v);
+void ink__w_u32     (struct ink_writer *w, uint32_t v);
+void ink__w_string  (struct ink_writer *w, const char *s);  /* "s" */
+void ink__w_path    (struct ink_writer *w, const char *s);  /* "o" */
+void ink__w_sig     (struct ink_writer *w, const char *s);  /* "g" */
+
+/* element_sig_first_char drives the alignment padding inserted
+ * between the array length prefix and the first element. */
+void ink__w_array_begin (struct ink_writer *w, char element_sig_first_char);
+void ink__w_array_end   (struct ink_writer *w);
+
+void ink__w_struct_begin(struct ink_writer *w);
+void ink__w_struct_end  (struct ink_writer *w);
+
+#endif /* LIBINK_MARSHAL_H_ */

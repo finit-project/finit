@@ -1,10 +1,10 @@
 #!/bin/sh
-# Smoke test for libink AUTH EXTERNAL handshake over /run/finit/bus.
-#
-# Verifies that with --enable-dbus (the default), Finit opens its
-# brokerless D-Bus socket and that the SASL-style AUTH EXTERNAL
-# handshake completes for a peer claiming the right UID and is
-# rejected for one claiming a wrong UID.
+# End-to-end smoke test for libink:
+#   - AUTH EXTERNAL handshake (happy and wrong-uid paths)
+#   - org.freedesktop.DBus.Hello
+#   - org.freedesktop.DBus.Introspectable.Introspect (root, manager)
+#   - org.finit.Manager1.ListServices
+#   - Error reply for an unknown method.
 
 set -eu
 
@@ -23,43 +23,80 @@ fi
 say "Wait for $BUS to appear"
 retry "texec test -S $BUS"
 
-say "Verify socket permissions are 0666"
+say "Socket mode is 0666"
 mode=$(texec stat -c %a "$BUS")
 assert "Socket mode is 666 (got $mode)" "$mode" = "666"
 
-say "Happy path — claim correct UID (root inside namespace = 0)"
-reply=$(texec "$CLIENT" "$BUS" 0)
+# ---------- AUTH ----------
+
+say "AUTH EXTERNAL: claim correct UID (root = 0)"
+reply=$(texec "$CLIENT" auth "$BUS" 0)
 assert "Reply starts with OK (got: $reply)" "${reply%% *}" = "OK"
 
-# GUID must be 32 hex chars; a server blindly emitting "OK foo" would
-# otherwise pass the prefix check above.
 guid=${reply#OK }
 assert "GUID is 32 hex chars (got: $guid)" \
     "$(printf '%s' "$guid" | tr -d '0-9a-f' | wc -c)" -eq 0
 assert "GUID length is 32 (got: ${#guid})" "${#guid}" -eq 32
 
-say "Wrong UID is rejected"
-# Claim uid 1, which does not match peer's real uid 0.  Exit code 1
-# means "REJECTED" (the expected denial); 0 would be acceptance,
-# 2 a transport error.  Distinguish all three for a useful failure
-# message.
+say "AUTH EXTERNAL: wrong UID is rejected"
 set +e
-wrong_reply=$(texec "$CLIENT" "$BUS" 1)
+wrong_reply=$(texec "$CLIENT" auth "$BUS" 1)
 wrong_rc=$?
 set -e
 assert "Wrong UID rejected (rc=$wrong_rc, reply: $wrong_reply)" \
     "$wrong_rc" -eq 1
 
-say "Two sequential connections both authenticate independently"
-reply1=$(texec "$CLIENT" "$BUS" 0)
-reply2=$(texec "$CLIENT" "$BUS" 0)
-assert "First connection OK"  "${reply1%% *}" = "OK"
-assert "Second connection OK" "${reply2%% *}" = "OK"
+say "Two sequential AUTH connections get different GUIDs"
+r1=$(texec "$CLIENT" auth "$BUS" 0)
+r2=$(texec "$CLIENT" auth "$BUS" 0)
+g1=${r1#OK }
+g2=${r2#OK }
+assert "Per-connection GUIDs differ ($g1 vs $g2)" "$g1" != "$g2"
 
-# The two GUIDs in the OK lines should differ; libink generates one
-# per connection.  This catches a regression where we accidentally
-# share GUID state across peers.
-guid1=${reply1#OK }
-guid2=${reply2#OK }
-assert "Per-connection GUIDs differ ($guid1 vs $guid2)" \
-    "$guid1" != "$guid2"
+# ---------- Built-in interfaces ----------
+
+say "Hello() returns a unique name beginning with ':1.'"
+name=$(texec "$CLIENT" hello "$BUS")
+case "$name" in
+    :1.*) assert "Hello returned a :1.N name (got $name)" 0 -eq 0 ;;
+    *)    fail "Hello returned unexpected name: $name" ;;
+esac
+
+say "Two Hello() calls produce different unique names"
+n1=$(texec "$CLIENT" hello "$BUS")
+n2=$(texec "$CLIENT" hello "$BUS")
+assert "Unique names increment ($n1 vs $n2)" "$n1" != "$n2"
+
+say "Introspect on root path returns valid XML referencing /manager"
+xml=$(texec "$CLIENT" introspect "$BUS" /)
+case "$xml" in
+    *'<node'*) assert "XML has <node> root (good)" 0 -eq 0 ;;
+    *) fail "Root introspect missing <node>: $xml" ;;
+esac
+
+say "Introspect on /org/finit/manager exposes Manager1.ListServices"
+xml=$(texec "$CLIENT" introspect "$BUS" /org/finit/manager)
+case "$xml" in
+    *'org.finit.Manager1'*'ListServices'*)
+        assert "Manager1 and ListServices visible in XML" 0 -eq 0 ;;
+    *)
+        fail "Manager1 XML missing; got: $xml" ;;
+esac
+
+# ---------- Real method call ----------
+
+say "Manager1.ListServices returns the running services"
+list=$(texec "$CLIENT" liststrings "$BUS" /org/finit/manager \
+       org.finit.Manager1 ListServices)
+assert "ListServices returned at least one service" \
+    "$(printf '%s' "$list" | wc -l | tr -d ' ')" -ge 1
+echo "$list"
+
+# ---------- Error reply ----------
+
+say "Unknown method gets an org.freedesktop.DBus.Error.* reply"
+set +e
+texec "$CLIENT" unknown "$BUS"
+unknown_rc=$?
+set -e
+assert "Unknown method returned an error (rc=$unknown_rc)" "$unknown_rc" -eq 0

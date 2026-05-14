@@ -1,9 +1,9 @@
 /* Finit-side glue between the event loop and libink.
  *
- * Owns the libink server, accepts new peers, and drives each peer's
- * state machine when its fd becomes readable.  Nothing in this file
- * leaks finit-internal types into libink, by design: the boundary
- * here is the prospective extraction line.
+ * Owns the libink server, accepts new peers, drives each peer's
+ * state machine, and registers the Finit-specific D-Bus object
+ * tree (org.finit.Manager1 et al).  Nothing in libink/ depends on
+ * finit-internal types: the boundary lives in this file, by design.
  *
  * Copyright (c) 2026  Joachim Wiberg <troglobit@gmail.com>
  *
@@ -40,18 +40,16 @@
 
 #include "finit.h"
 #include "log.h"
+#include "service.h"
+#include "svc.h"
+
+#define DBUS_MAX_PEERS 64
 
 struct peer {
 	uev_t              watcher;
 	ink_connection_t  *conn;
 	TAILQ_ENTRY(peer)  link;
 };
-
-/* Cap the per-process peer count.  The socket is world-accessible by
- * design (introspection should work for unprivileged users) so an
- * unprivileged local actor could connect in a loop until EMFILE
- * without this. */
-#define DBUS_MAX_PEERS 64
 
 static TAILQ_HEAD(, peer) peers = TAILQ_HEAD_INITIALIZER(peers);
 static ink_server_t      *server;
@@ -127,12 +125,58 @@ static void accept_cb(uev_t *w, void *arg, int events)
 	}
 }
 
+/* ---------- org.finit.Manager1 ---------- */
+
+static int manager_list_services(ink_call_t *call, void *userdata)
+{
+	ink_writer_t *w;
+	svc_t        *iter = NULL;
+	svc_t        *svc;
+
+	(void)userdata;
+
+	w = ink_call_reply(call);
+	if (!w)
+		return -1;
+
+	ink_w_array_begin(w, 's');
+	for (svc = svc_iterator(&iter, 1); svc; svc = svc_iterator(&iter, 0)) {
+		char ident[MAX_IDENT_LEN];
+
+		svc_ident(svc, ident, sizeof(ident));
+		ink_w_string(w, ident);
+	}
+	ink_w_array_end(w);
+	return 0;
+}
+
+static const ink_method_t manager_methods[] = {
+	{ .name = "ListServices", .in_sig = "", .out_sig = "as",
+	  .handler = manager_list_services },
+	{ NULL, NULL, NULL, NULL }
+};
+
+static const ink_vtable_t manager_vtable = {
+	.interface = "org.finit.Manager1",
+	.methods   = manager_methods,
+};
+
+/* ---------- init / exit ---------- */
+
 int dbus_init(uev_ctx_t *ctx)
 {
 	dbg("Setting up D-Bus listening socket at %s ...", FINIT_BUS_SOCKET);
 
 	if (ink_server_new(&server, FINIT_BUS_SOCKET) < 0) {
 		err(1, "Failed binding D-Bus socket %s", FINIT_BUS_SOCKET);
+		return 1;
+	}
+
+	if (ink_server_add_object(server, "/org/finit/manager",
+				  &manager_vtable, NULL) < 0) {
+		err(1, "Failed registering Manager1 object");
+		ink_server_free(server);
+		server = NULL;
 		return 1;
 	}
 
