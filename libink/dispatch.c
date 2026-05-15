@@ -135,6 +135,10 @@ static const ink_method_t *resolve(struct ink_object *o,
 
 /* ----------  send helpers  ---------- */
 
+/* TODO: send_all is blocking.  A slow or paused peer that lets its
+ * socket buffer fill will stall PID 1 here.  The 64-peer cap +
+ * kernel buffer (~256 KB) hide the symptom for now; for production
+ * hardening, make the fd non-blocking and drop the peer on EAGAIN. */
 static int send_all(int fd, const uint8_t *buf, size_t len)
 {
 	while (len > 0) {
@@ -163,6 +167,52 @@ int ink__send_method_return(ink_connection_t *conn, const struct ink_msg *req,
 				     req->serial,
 				     req->sender,
 				     out_sig, (uint32_t)body_len);
+	if (hlen < 0) {
+		errno = EMSGSIZE;
+		return -1;
+	}
+
+	if (send_all(conn->fd, hdr, (size_t)hlen) < 0)
+		return -1;
+	if (body_len > 0 && send_all(conn->fd, body, body_len) < 0)
+		return -1;
+	return 0;
+}
+
+int ink_connection_emit_signal(ink_connection_t *conn,
+			       const char *path,
+			       const char *interface,
+			       const char *member,
+			       const char *signature,
+			       const uint8_t *body, size_t body_len)
+{
+	uint8_t  hdr[512];
+	ssize_t  hlen;
+	uint32_t serial;
+	size_t   i;
+	int      matched = 0;
+
+	if (!conn || !path || !interface || !member) {
+		errno = EINVAL;
+		return -1;
+	}
+	if (conn->auth != INK_AUTH_DONE)
+		return 0;	/* peer hasn't finished the SASL phase */
+
+	for (i = 0; i < conn->matches_count; i++) {
+		if (ink__match_matches(conn->matches[i], path,
+				       interface, member)) {
+			matched = 1;
+			break;
+		}
+	}
+	if (!matched)
+		return 0;	/* peer didn't subscribe — nothing to do */
+
+	serial = ++conn->next_serial;
+	hlen = ink__msg_build_signal(hdr, sizeof(hdr), serial,
+				     path, interface, member,
+				     signature, (uint32_t)body_len);
 	if (hlen < 0) {
 		errno = EMSGSIZE;
 		return -1;
@@ -251,6 +301,9 @@ int ink_call_read_string(ink_call_t *c, const char **o)    { return ink__r_strin
 int ink_call_read_path  (ink_call_t *c, const char **o)    { return ink__r_path  (&c->read_cursor, o); }
 
 /* ----------  public writer wrappers  ---------- */
+
+void    ink_writer_init  (ink_writer_t *w, uint8_t *buf, size_t cap) { ink__w_init(w, buf, cap); }
+ssize_t ink_writer_finish(ink_writer_t *w)                           { return ink__w_finish(w); }
 
 void ink_w_byte    (ink_writer_t *w, uint8_t v)        { ink__w_byte(w, v); }
 void ink_w_bool    (ink_writer_t *w, int v)            { ink__w_bool(w, v); }

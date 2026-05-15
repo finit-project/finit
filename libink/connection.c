@@ -23,8 +23,13 @@ uid_t ink_connection_get_uid(const ink_connection_t *conn)
 
 void ink_connection_close(ink_connection_t *conn)
 {
+	size_t i;
+
 	if (!conn)
 		return;
+
+	for (i = 0; i < conn->matches_count; i++)
+		ink__match_free(conn->matches[i]);
 
 	if (conn->fd >= 0)
 		close(conn->fd);

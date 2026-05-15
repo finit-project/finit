@@ -9,22 +9,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define INK_WRITER_MAX_NESTING 8
-
-struct ink_writer {
-	uint8_t *buf;
-	size_t   cap;
-	size_t   off;
-	int      err;
-
-	/* Stack of open arrays, used to back-patch the length prefix
-	 * on array_end with the elements-only byte count. */
-	struct {
-		size_t lenpos;    /* offset of the u32 length */
-		size_t elemstart; /* offset of first element (post-padding) */
-	}      arrays[INK_WRITER_MAX_NESTING];
-	size_t array_depth;
-};
+/* struct ink_writer is defined in ink.h (public).  Field layout is
+ * "opaque" per the public contract; this file's helpers manipulate
+ * the fields directly. */
+#include "ink.h"
 
 void    ink__w_init  (struct ink_writer *w, uint8_t *buf, size_t cap);
 ssize_t ink__w_finish(struct ink_writer *w);

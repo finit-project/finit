@@ -4,6 +4,7 @@ libink_la_SOURCES        = server.c auth.c connection.c \
                            proto.c proto.h               \
                            marshal.c marshal.h           \
                            dispatch.c builtin.c          \
+                           match.c                       \
                            path.c                        \
                            ink-internal.h
 

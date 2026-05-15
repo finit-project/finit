@@ -38,6 +38,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <poll.h>
 
 static const char hex[] = "0123456789abcdef";
 
@@ -78,6 +79,25 @@ static int read_full(int fd, void *buf, size_t len)
 		len -= (size_t)n;
 	}
 	return 0;
+}
+
+static int read_with_timeout(int fd, void *buf, size_t len, int timeout_ms)
+{
+	struct pollfd pfd = { .fd = fd, .events = POLLIN };
+	int           rc;
+
+	for (;;) {
+		rc = poll(&pfd, 1, timeout_ms);
+		if (rc < 0) {
+			if (errno == EINTR)
+				continue;
+			return -1;
+		}
+		if (rc == 0)
+			return 0;	/* timed out */
+		break;
+	}
+	return (int)read(fd, buf, len);
 }
 
 static ssize_t read_line(int fd, char *buf, size_t bufsz)
@@ -338,20 +358,36 @@ struct reply {
 	uint32_t body_len;
 	char     signature[64];
 	char     error_name[128];
+	char     interface[128];
+	char     member[128];
 	uint8_t  body[8192];
 };
 
-static int read_reply(int fd, struct reply *r)
+/* Read one D-Bus message into *r.
+ *   timeout_ms == 0  -> block forever waiting for the header byte
+ *   timeout_ms > 0   -> wait that long for the header to start; once
+ *                       bytes arrive, the remainder of the frame is
+ *                       read without a timeout (it's "in flight").
+ * Returns 0 on success, -1 on EOF / parse error / timeout. */
+static int read_reply(int fd, struct reply *r, int timeout_ms)
 {
 	uint8_t hdr_fixed[16];
 	uint8_t hdr_fields[2048];
 	uint32_t fields_len;
 	size_t   body_off;
 	size_t   pos;
+	size_t   off = 0;
 
 	memset(r, 0, sizeof(*r));
 
-	if (read_full(fd, hdr_fixed, 16) < 0) return -1;
+	if (timeout_ms > 0) {
+		int n = read_with_timeout(fd, hdr_fixed, 1, timeout_ms);
+		if (n <= 0) return -1;
+		off = 1;
+	}
+	if (off < 16 && read_full(fd, hdr_fixed + off, 16 - off) < 0)
+		return -1;
+
 	if (hdr_fixed[0] != 'l') return -1;
 	r->type     = hdr_fixed[1];
 	r->body_len = (uint32_t)hdr_fixed[4]
@@ -369,7 +405,6 @@ static int read_reply(int fd, struct reply *r)
 	if (fields_len > sizeof(hdr_fields)) return -1;
 	if (read_full(fd, hdr_fields, fields_len) < 0) return -1;
 
-	/* Skip header padding to 8 bytes. */
 	body_off = (size_t)ALIGN_UP(16 + fields_len, 8);
 	if (body_off > 16 + fields_len) {
 		uint8_t pad[8];
@@ -377,22 +412,25 @@ static int read_reply(int fd, struct reply *r)
 			return -1;
 	}
 
-	/* Walk header fields, capture SIGNATURE and ERROR_NAME. */
 	pos = 0;
 	while (pos < fields_len) {
 		uint8_t code;
 		size_t  vsig_len;
+		const char *vsig;
 
 		pos = ALIGN_UP(pos, 8);
 		if (pos >= fields_len) break;
 		code = hdr_fields[pos++];
 		vsig_len = hdr_fields[pos++];
 		if (pos + vsig_len + 1 > fields_len) return -1;
-		const char *vsig = (const char *)(hdr_fields + pos);
+		vsig = (const char *)(hdr_fields + pos);
 		pos += vsig_len + 1;
 
 		if (vsig[0] == 's' || vsig[0] == 'o') {
 			uint32_t slen;
+			char    *dst    = NULL;
+			size_t   dst_sz = 0;
+
 			pos = ALIGN_UP(pos, 4);
 			if (pos + 4 > fields_len) return -1;
 			slen = (uint32_t)hdr_fields[pos]
@@ -401,9 +439,16 @@ static int read_reply(int fd, struct reply *r)
 			     | ((uint32_t)hdr_fields[pos + 3] << 24);
 			pos += 4;
 			if (pos + slen + 1 > fields_len) return -1;
-			if (code == 4 && slen < sizeof(r->error_name)) {
-				memcpy(r->error_name, hdr_fields + pos, slen);
-				r->error_name[slen] = '\0';
+
+			switch (code) {
+			case 2:  dst = r->interface;  dst_sz = sizeof(r->interface);  break;
+			case 3:  dst = r->member;     dst_sz = sizeof(r->member);     break;
+			case 4:  dst = r->error_name; dst_sz = sizeof(r->error_name); break;
+			default: break;
+			}
+			if (dst && slen < dst_sz) {
+				memcpy(dst, hdr_fields + pos, slen);
+				dst[slen] = '\0';
 			}
 			pos += slen + 1;
 		} else if (vsig[0] == 'g') {
@@ -538,7 +583,7 @@ static int do_call_arg(const char *path, const char *obj_path,
 		close(fd);
 		return 2;
 	}
-	if (read_reply(fd, r) < 0) {
+	if (read_reply(fd, r, 0) < 0) {
 		fprintf(stderr, "read_reply\n");
 		close(fd);
 		return 2;
@@ -674,6 +719,77 @@ static int drop_uid_from_arg(const char *uid_arg, const char *progname)
 	return 0;
 }
 
+/* monitor-signal <sock> <match-rule> <timeout-ms>
+ *
+ * Subscribes via org.freedesktop.DBus.AddMatch, then reads
+ * incoming messages until either a SIGNAL is received or the
+ * timeout elapses.  On a signal: prints "SIGNAL <iface> <member>"
+ * followed by any "s" args, one per line.  Exit 0 on signal, 1 on
+ * timeout, 2 on transport error. */
+static int mode_monitor_signal(int argc, char *argv[])
+{
+	int   fd;
+	int   timeout_ms;
+	struct reply r;
+	char *ep = NULL;
+	long  v;
+
+	if (argc != 5) return 2;
+
+	errno = 0;
+	v = strtol(argv[4], &ep, 10);
+	if (errno || !ep || *ep != '\0' || v <= 0 || v > 600000) {
+		fprintf(stderr, "%s: bad timeout: %s\n", argv[0], argv[4]);
+		return 2;
+	}
+	timeout_ms = (int)v;
+
+	fd = connect_and_auth(argv[2], getuid());
+	if (fd < 0) return 2;
+
+	/* AddMatch on org.freedesktop.DBus */
+	if (send_method_call_with_arg(fd, "/org/freedesktop/DBus",
+				      "org.freedesktop.DBus", "AddMatch",
+				      "s", argv[3], 0) < 0) {
+		close(fd); return 2;
+	}
+	if (read_reply(fd, &r, 0) < 0) { close(fd); return 2; }
+	if (r.type == 3) {
+		fprintf(stderr, "AddMatch ERROR: %s\n", r.error_name);
+		close(fd); return 2;
+	}
+
+	/* Now read messages until a signal or timeout. */
+	for (;;) {
+		if (read_reply(fd, &r, timeout_ms) < 0) {
+			close(fd);
+			return 1;	/* timeout / transport */
+		}
+		if (r.type != 4)	/* not a SIGNAL */
+			continue;
+		printf("SIGNAL %s %s\n", r.interface, r.member);
+		/* Decode body as a sequence of strings; print one per line. */
+		{
+			size_t pos = 0;
+			while (pos + 4 <= r.body_len) {
+				uint32_t slen;
+				pos = ALIGN_UP(pos, 4);
+				if (pos + 4 > r.body_len) break;
+				slen = (uint32_t)r.body[pos]
+				     | ((uint32_t)r.body[pos + 1] << 8)
+				     | ((uint32_t)r.body[pos + 2] << 16)
+				     | ((uint32_t)r.body[pos + 3] << 24);
+				pos += 4;
+				if (pos + slen + 1 > r.body_len) break;
+				printf("%.*s\n", (int)slen, r.body + pos);
+				pos += slen + 1;
+			}
+		}
+		close(fd);
+		return 0;
+	}
+}
+
 /* call-s-as-uid <uid> <sock> <obj> <iface> <method> <arg>
  *
  * Drops effective uid to <uid> (must work inside the test
@@ -735,6 +851,7 @@ int main(int argc, char *argv[])
 	if (strcmp(argv[1], "liststrings") == 0) return mode_liststrings(argc, argv);
 	if (strcmp(argv[1], "call-s")        == 0) return mode_call_s(argc, argv);
 	if (strcmp(argv[1], "call-void")     == 0) return mode_call_void(argc, argv);
+	if (strcmp(argv[1], "monitor-signal")   == 0) return mode_monitor_signal(argc, argv);
 	if (strcmp(argv[1], "call-s-as-uid")    == 0) return mode_call_s_as_uid(argc, argv);
 	if (strcmp(argv[1], "call-void-as-uid") == 0) return mode_call_void_as_uid(argc, argv);
 	if (strcmp(argv[1], "get-service")      == 0) return mode_get_service(argc, argv);

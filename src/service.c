@@ -3063,6 +3063,10 @@ static void svc_set_state(svc_t *svc, svc_state_t new_state)
 		return;
 	*state = new_state;
 
+#ifdef HAVE_DBUS
+	dbus_notify_service_state(svc, old_state, new_state);
+#endif
+
 	/*
 	 * The unit has stopped: HALTED comes after any post:/cleanup:
 	 * script, DONE is a completed run/task, where remain-after-exit

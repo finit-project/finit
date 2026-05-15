@@ -25,6 +25,8 @@ typedef enum {
 #define INK_RX_BUF_SIZE       (64 * 1024)
 #define INK_TX_BUF_SIZE       (16 * 1024)
 #define INK_UNIQUE_NAME_LEN   16
+#define INK_MATCH_RULE_MAX    256	/* per-peer match rule cap */
+#define INK_MATCH_PEER_CAP    16	/* max active match rules per peer */
 
 /* Per-vtable record attached to an object's interface list. */
 struct ink_vtable_entry {
@@ -66,6 +68,16 @@ struct ink_call {
 	int               error_sent;
 };
 
+/* A parsed AddMatch rule.  Fields are NULL when the rule omits the
+ * key, meaning "match anything"; non-NULL means "must equal". */
+struct ink_match {
+	char *raw;		/* original string, for RemoveMatch */
+	char *type;		/* "signal", or NULL */
+	char *interface;
+	char *member;
+	char *path;
+};
+
 struct ink_connection {
 	int                 fd;
 	uid_t               peer_uid;
@@ -76,6 +88,12 @@ struct ink_connection {
 	ink_auth_state_t    auth;
 	char                linebuf[INK_AUTH_LINEBUF_SIZE];
 	size_t              linelen;
+
+	/* Match rules registered via org.freedesktop.DBus.AddMatch.
+	 * Bounded for PID 1 hygiene; a peer that exceeds the cap gets
+	 * a LimitsExceeded error reply. */
+	struct ink_match   *matches[INK_MATCH_PEER_CAP];
+	size_t              matches_count;
 
 	uint8_t             rxbuf[INK_RX_BUF_SIZE];
 	size_t              rxlen;
@@ -105,5 +123,14 @@ int  ink__send_method_return(ink_connection_t *conn, const struct ink_msg *req,
 
 /* builtin.c */
 int  ink__handle_builtin(ink_connection_t *conn, const struct ink_msg *m);
+
+/* match.c */
+struct ink_match *ink__match_parse  (const char *rule);
+void              ink__match_free   (struct ink_match *m);
+int               ink__match_matches(const struct ink_match *m,
+				     const char *path, const char *iface,
+				     const char *member);
+int               ink__match_add    (ink_connection_t *conn, const char *rule);
+int               ink__match_remove (ink_connection_t *conn, const char *rule);
 
 #endif /* LIBINK_INK_INTERNAL_H_ */

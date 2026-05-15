@@ -231,6 +231,60 @@ static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
 	return send_string_reply(conn, m, xml);
 }
 
+/* ---------- AddMatch / RemoveMatch ---------- */
+
+static int handle_add_match(ink_connection_t *conn, const struct ink_msg *m)
+{
+	const char *rule;
+	struct ink_reader r;
+
+	if (!m->signature || strcmp(m->signature, "s") != 0)
+		return ink__send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"AddMatch takes a single string");
+
+	ink__r_init(&r, m->body, m->body_avail);
+	if (ink__r_string(&r, &rule) < 0)
+		return ink__send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"Malformed argument");
+
+	if (ink__match_add(conn, rule) < 0) {
+		if (errno == ENOSPC)
+			return ink__send_error(conn, m,
+				"org.freedesktop.DBus.Error.LimitsExceeded",
+				"Too many active match rules");
+		return ink__send_error(conn, m,
+			"org.freedesktop.DBus.Error.MatchRuleInvalid",
+			"Unrecognised key or malformed rule");
+	}
+	return ink__send_method_return(conn, m, NULL, NULL, 0);
+}
+
+static int handle_remove_match(ink_connection_t *conn, const struct ink_msg *m)
+{
+	const char *rule;
+	struct ink_reader r;
+
+	if (!m->signature || strcmp(m->signature, "s") != 0)
+		return ink__send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"RemoveMatch takes a single string");
+
+	ink__r_init(&r, m->body, m->body_avail);
+	if (ink__r_string(&r, &rule) < 0)
+		return ink__send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"Malformed argument");
+
+	if (ink__match_remove(conn, rule) < 0)
+		return ink__send_error(conn, m,
+			"org.freedesktop.DBus.Error.MatchRuleNotFound",
+			"No such match rule on this connection");
+
+	return ink__send_method_return(conn, m, NULL, NULL, 0);
+}
+
 /* ---------- entry point ---------- */
 
 int ink__handle_builtin(ink_connection_t *conn, const struct ink_msg *m)
@@ -238,6 +292,14 @@ int ink__handle_builtin(ink_connection_t *conn, const struct ink_msg *m)
 	if (member_is(m, "org.freedesktop.DBus", "Hello") &&
 	    m->path && strcmp(m->path, "/org/freedesktop/DBus") == 0)
 		return handle_hello(conn, m);
+
+	if (member_is(m, "org.freedesktop.DBus", "AddMatch") &&
+	    m->path && strcmp(m->path, "/org/freedesktop/DBus") == 0)
+		return handle_add_match(conn, m);
+
+	if (member_is(m, "org.freedesktop.DBus", "RemoveMatch") &&
+	    m->path && strcmp(m->path, "/org/freedesktop/DBus") == 0)
+		return handle_remove_match(conn, m);
 
 	if (member_is(m, "org.freedesktop.DBus.Peer", "Ping"))
 		return handle_ping(conn, m);

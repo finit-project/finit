@@ -23,6 +23,7 @@
 #ifndef LIBINK_INK_H_
 #define LIBINK_INK_H_
 
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -33,7 +34,23 @@ extern "C" {
 typedef struct ink_server     ink_server_t;
 typedef struct ink_connection ink_connection_t;
 typedef struct ink_call       ink_call_t;
-typedef struct ink_writer     ink_writer_t;
+
+/* Writer is exposed so callers can stack-allocate one for marshalling
+ * signal/reply bodies.  Treat the fields as opaque; use ink_writer_init
+ * + the ink_w_* helpers + ink_writer_finish.  Sized for typical D-Bus
+ * messages -- the array stack supports up to 8 levels of nesting. */
+#define INK_WRITER_MAX_NESTING 8
+typedef struct ink_writer {
+	uint8_t *buf;
+	size_t   cap;
+	size_t   off;
+	int      err;
+	struct {
+		size_t lenpos;
+		size_t elemstart;
+	}      arrays[INK_WRITER_MAX_NESTING];
+	size_t array_depth;
+} ink_writer_t;
 
 /* ----------  server / connection lifecycle  ---------- */
 
@@ -113,6 +130,31 @@ ink_writer_t *ink_call_reply(ink_call_t *call);
  * name (e.g. "org.freedesktop.DBus.Error.UnknownMethod"); `message`
  * may be NULL. */
 int ink_call_reply_error(ink_call_t *call, const char *name, const char *message);
+
+/* ----------  signal emission  ----------
+ *
+ * Send a signal to a single peer if its AddMatch rules accept it.
+ * Callers marshal the body separately and pass the resulting bytes.
+ * Returns 0 on success (or "filtered out, nothing sent"), -1 with
+ * errno set on failure: EMSGSIZE and EINVAL mean nothing hit the
+ * wire and the connection is still usable; anything else is a
+ * transport failure that may have left a partial frame -- the
+ * caller must drop the peer. */
+int ink_connection_emit_signal(ink_connection_t *conn,
+			       const char *path,
+			       const char *interface,
+			       const char *member,
+			       const char *signature,
+			       const uint8_t *body, size_t body_len);
+
+/* ----------  standalone writer  ----------
+ *
+ * For marshalling bodies outside a method-call handler (signals,
+ * pre-computed replies).  Initialise on a caller-owned buffer,
+ * write args via ink_w_*, then call ink_writer_finish which
+ * returns the body length or -1 on overflow. */
+void    ink_writer_init  (ink_writer_t *w, uint8_t *buf, size_t cap);
+ssize_t ink_writer_finish(ink_writer_t *w);
 
 /* ----------  writer (mirrors the internal marshaller)  ---------- */
 

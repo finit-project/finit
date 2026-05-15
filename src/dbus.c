@@ -482,6 +482,71 @@ void dbus_unregister_service(svc_t *svc)
 	(void)ink_server_remove_object(server, path);
 }
 
+/* ---------- signal emission: ServiceStateChanged ---------- */
+
+/*
+ * Coarse svc_state_t -> string.  svc_status() in svc.h returns a
+ * richer string that also considers svc->block, but emitting just
+ * the state-machine state is enough for clients to track lifecycle
+ * transitions.  Keep the strings stable -- they're a wire-API
+ * commitment once shipped.
+ *
+ * No `default:` on purpose: a new SVC_*_STATE added to svc.h must
+ * also pick a wire name here, and -Wall (-Wswitch) flags the
+ * missing case.
+ */
+static const char *state_name(svc_state_t s)
+{
+	switch (s) {
+	case SVC_HALTED_STATE:   return "halted";
+	case SVC_DONE_STATE:     return "done";
+	case SVC_DEAD_STATE:     return "dead";
+	case SVC_CLEANUP_STATE:  return "cleanup";
+	case SVC_TEARDOWN_STATE: return "teardown";
+	case SVC_STOPPING_STATE: return "stopping";
+	case SVC_SETUP_STATE:    return "setup";
+	case SVC_PAUSED_STATE:   return "paused";
+	case SVC_WAITING_STATE:  return "waiting";
+	case SVC_STARTING_STATE: return "starting";
+	case SVC_RUNNING_STATE:  return "running";
+	}
+	return "unknown";
+}
+
+void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
+{
+	uint8_t        body[256];
+	ink_writer_t   w;
+	struct peer   *p;
+	char           ident[MAX_IDENT_LEN];
+	ssize_t        blen;
+	svc_state_t    o = (svc_state_t)old_state;
+	svc_state_t    n = (svc_state_t)new_state;
+
+	if (!server || !svc)
+		return;
+	if (TAILQ_EMPTY(&peers))
+		return;	/* nobody could possibly be listening */
+
+	svc_ident(svc, ident, sizeof(ident));
+
+	ink_writer_init(&w, body, sizeof(body));
+	ink_w_string(&w, ident);
+	ink_w_string(&w, state_name(o));
+	ink_w_string(&w, state_name(n));
+	blen = ink_writer_finish(&w);
+	if (blen < 0)
+		return;
+
+	TAILQ_FOREACH(p, &peers, link)
+		(void)ink_connection_emit_signal(p->conn,
+				"/org/finit/manager",
+				"org.finit.Manager1",
+				"ServiceStateChanged",
+				"sss",
+				body, (size_t)blen);
+}
+
 /* ---------- init / exit ---------- */
 
 int dbus_init(uev_ctx_t *ctx)
