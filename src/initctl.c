@@ -42,6 +42,9 @@
 #include "cgutil.h"
 #include "utmp-api.h"
 
+/* Used by both do_cond_act and (with HAVE_DBUS) cond_dbus_call. */
+typedef enum { COND_CLR, COND_SET, COND_GET } condop_t;
+
 struct cmd {
 	char        *cmd;
 	struct cmd  *ctx;
@@ -327,6 +330,139 @@ static int try_dbus_manager(const char *method, const char *arg_sig,
 		return 0;
 	return -1;	/* LINK_CALL_FAIL or anything else: fall back */
 }
+
+/* Try one Cond1.{Get,Set,Clear} call.  On COND_GET success the helper
+ * fills *out_exit with the exit code (0 = on, 1 = off, 255 = flux).
+ * Outcomes:
+ *   1   call succeeded; for GET the result is in *out_exit, for
+ *       SET/CLR the caller loops to the next arg
+ *   0   bus not reachable, or LINK_CALL_FAIL -- *bus is closed/NULLed
+ *       and the caller should drop to the legacy filesystem path
+ *   (LINK_CALL_ERROR exits via ERRX inside the helper)
+ *
+ * `*bus` is borrowed; the helper closes it (and sets NULL) on every
+ * exit path that leaves the bus unusable. */
+static int cond_dbus_call(link_client_t **bus, condop_t op,
+			  const char *arg, int *out_exit)
+{
+	const char *method = (op == COND_GET) ? "Get"
+			   : (op == COND_SET) ? "Set" : "Clear";
+	int rc;
+
+	if (!*bus)
+		return 0;
+
+	rc = link_client_call_v(*bus, "/org/finit/cond",
+				"org.finit.Cond1", method,
+				"s", arg);
+	if (rc == LINK_CALL_OK) {
+		if (op == COND_GET) {
+			const link_reply_t *r = link_client_reply(*bus);
+			link_reader_t reader;
+			const char   *state = NULL;
+
+			if (r && r->body) {
+				link_reader_init(&reader, r->body, r->body_len);
+				link_r_string(&reader, &state);
+			}
+			if (verbose && state)
+				puts(state);
+			*out_exit = (state && !strcmp(state, "on"))  ? 0
+				  : (state && !strcmp(state, "off")) ? 1 : 255;
+		}
+		return 1;
+	}
+	if (rc == LINK_CALL_ERROR) {
+		const link_reply_t *r = link_client_reply(*bus);
+		const char *err = (r && r->error_name) ? r->error_name : "";
+
+		link_client_close(*bus);
+		*bus = NULL;
+		if (!strcmp(err, "org.freedesktop.DBus.Error.AccessDenied"))
+			ERRX(1, "permission denied: cond %s requires root", method);
+		ERRX(73, "Failed %s condition <%s>: %s",
+		     op == COND_SET ? "asserting" : "deasserting",
+		     arg, *err ? err : "D-Bus error");
+	}
+	/* LINK_CALL_FAIL */
+	link_client_close(*bus);
+	*bus = NULL;
+	return 0;
+}
+
+/* Subscribe to every signal on the bus and print one line per
+ * incoming message:
+ *     HH:MM:SS interface.member(arg1, arg2, ...)
+ *
+ * Only string-typed leading args are decoded (matches what our two
+ * current signals -- ServiceStateChanged (sss) and ConditionChanged
+ * (ss) -- emit).  Non-string args are silently skipped.  Loops until
+ * the connection drops or the user hits ^C. */
+static int do_monitor(char *arg)
+{
+	link_client_t *c;
+	int            rc;
+
+	(void)arg;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		ERRX(1, "monitor requires the D-Bus socket at %s", FINIT_BUS_SOCKET);
+
+	rc = link_client_call_v(c, "/org/freedesktop/DBus",
+				"org.freedesktop.DBus", "AddMatch",
+				"s", "type='signal'");
+	if (rc != LINK_CALL_OK) {
+		link_client_close(c);
+		ERRX(1, "AddMatch failed (rc=%d)", rc);
+	}
+
+	for (;;) {
+		const link_reply_t *r;
+		link_reader_t       reader;
+		char                ts[16];
+		time_t              now;
+		struct tm           tm;
+
+		rc = link_client_wait(c, -1);
+		if (rc < 0) {
+			link_client_close(c);
+			ERRX(1, "bus connection lost");
+		}
+		if (rc > 0)	/* impossible with timeout=-1, but harmless */
+			continue;
+		r = link_client_reply(c);
+		if (!r || r->type != LINK_MSG_SIGNAL)
+			continue;
+
+		now = time(NULL);
+		localtime_r(&now, &tm);
+		strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
+		printf("%s %s.%s(", ts,
+		       r->interface ? r->interface : "?",
+		       r->member    ? r->member    : "?");
+
+		link_reader_init(&reader, r->body, r->body_len);
+		if (r->signature) {
+			const char *p;
+			int         first = 1;
+
+			for (p = r->signature; *p == 's'; p++) {
+				const char *s;
+
+				if (link_r_string(&reader, &s) < 0)
+					break;
+				printf("%s%s", first ? "" : ", ", s);
+				first = 0;
+			}
+		}
+		printf(")\n");
+		fflush(stdout);
+	}
+
+	link_client_close(c);
+	return 0;
+}
 #endif /* HAVE_DBUS */
 
 static int do_start  (char *arg)
@@ -496,8 +632,6 @@ static int do_cond_dump(char *arg)
 	return 0;
 }
 
-typedef enum { COND_CLR, COND_SET, COND_GET } condop_t;
-
 static cond_state_t cond_read(char *path)
 {
 	int now, gen;
@@ -527,6 +661,9 @@ static int do_cond_act(char *args, condop_t op)
 	cond_state_t cstate;
 	char path[256];
 	char *arg;
+#ifdef HAVE_DBUS
+	link_client_t *bus = link_client_open(FINIT_BUS_SOCKET);
+#endif
 
 	if (!args || !args[0])
 		ERRX(2, "Invalid condition (empty)");
@@ -545,6 +682,22 @@ static int do_cond_act(char *args, condop_t op)
 			if (strchr(arg, '.'))
 				ERRX(2, "Invalid condition (periods)");
 		}
+
+#ifdef HAVE_DBUS
+		{
+			int exit_code;
+
+			if (cond_dbus_call(&bus, op, arg, &exit_code)) {
+				if (op == COND_GET) {
+					link_client_close(bus);
+					return exit_code;
+				}
+				arg = strtok(NULL, " \t");
+				continue;
+			}
+			/* bus is NULL now -- drop through to legacy */
+		}
+#endif
 
 		if (strchr(arg, '/'))
 			snprintf(path, sizeof(path), _PATH_COND "%s", arg);
@@ -582,6 +735,10 @@ static int do_cond_act(char *args, condop_t op)
 		arg = strtok(NULL, " \t");
 	}
 
+#ifdef HAVE_DBUS
+	if (bus)
+		link_client_close(bus);
+#endif
 	return 0;
 }
 
@@ -1696,6 +1853,9 @@ static int usage(int rc)
 		"                            Note: Finit .conf file(s) are *not* reloaded!\n"
 		"  restart  <NAME>[:ID]      Restart (stop/start) service by name\n"
 		"  kill     <NAME>[:ID] <S>  Send signal S to service by name, with optional ID\n"
+#ifdef HAVE_DBUS
+		"  monitor                   Stream D-Bus signals (service state, conditions) until ^C\n"
+#endif
 		"  ident    [NAME]           Show matching identities for NAME, or all\n"
 		"  status   <NAME>[:ID]      Show service status, by name\n"
 		"  status                    Show status of services, default command\n");
@@ -1880,6 +2040,9 @@ int main(int argc, char *argv[])
 		{ "start",    NULL, do_start,     NULL, NULL  },
 		{ "stop",     NULL, do_stop,      NULL, NULL  },
 		{ "restart",  NULL, do_restart,   NULL, NULL  },
+#ifdef HAVE_DBUS
+		{ "monitor",  NULL, do_monitor,   NULL, NULL  },
+#endif
 		{ "signal",   NULL, NULL,         NULL, do_signal  },
 		{ "kill",     NULL, NULL,         NULL, do_signal  }, /* alias */
 

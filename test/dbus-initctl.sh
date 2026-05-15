@@ -40,3 +40,29 @@ say "initctl reload (no args) routes through Manager1.Reload"
 texec initctl reload >/dev/null \
     || fail "initctl reload returned non-zero"
 assert "initctl reload ok" 0 -eq 0
+
+# A ConditionChanged signal can only originate from Cond1.Set going
+# through finit (the legacy filesystem path doesn't emit signals).
+# So if the monitor sees one, we know initctl cond set was routed
+# via D-Bus.
+say "initctl cond set drives Cond1.Set via D-Bus"
+rm -f /tmp/dbus-initctl-cond.out
+( texec "$CLIENT" monitor-signal "$BUS" \
+    "type='signal',interface='org.finit.Cond1',member='ConditionChanged'" \
+    5000 > /tmp/dbus-initctl-cond.out 2>&1 ) &
+ic_cond_pid=$!
+sleep 0.5
+texec initctl cond set "via-initctl" >/dev/null \
+    || fail "initctl cond set returned non-zero"
+set +e
+wait "$ic_cond_pid"
+ic_cond_rc=$?
+set -e
+assert "ConditionChanged fired from initctl cond set (rc=$ic_cond_rc)" \
+    "$ic_cond_rc" -eq 0
+case "$(cat /tmp/dbus-initctl-cond.out)" in
+    *"SIGNAL org.finit.Cond1 ConditionChanged"*"usr/via-initctl"*on*)
+        assert "initctl cond set routed through D-Bus" 0 -eq 0 ;;
+    *)
+        fail "initctl cond set didn't produce expected signal: $(cat /tmp/dbus-initctl-cond.out)" ;;
+esac
