@@ -143,6 +143,41 @@ case "$result" in
     *)              fail "Unexpected reply from non-root ListServices: $result" ;;
 esac
 
+# ---------- Per-service objects (Service1) ----------
+
+say "Manager1.GetService(keventd) returns the encoded object path"
+path=$(texec "$CLIENT" get-service "$BUS" keventd)
+expected="/org/finit/service/keventd"
+assert "GetService returned expected path (got: $path)" "$path" = "$expected"
+
+say "Introspect on the service object exposes Service1 methods"
+xml=$(texec "$CLIENT" introspect "$BUS" /org/finit/service/keventd)
+case "$xml" in
+    *'org.finit.Service1'*'Restart'*)
+        assert "Service1.Restart visible in service-object XML" 0 -eq 0 ;;
+    *)
+        fail "Service1 not visible on /org/finit/service/keventd: $xml" ;;
+esac
+
+say "Service1.Restart on /org/finit/service/keventd succeeds"
+texec "$CLIENT" call-void "$BUS" /org/finit/service/keventd \
+    org.finit.Service1 Restart >/dev/null \
+    || fail "Service1.Restart returned non-zero"
+assert "Per-service Restart ok" 0 -eq 0
+
+say "Service1.Restart from non-root is rejected with AccessDenied"
+set +e
+texec "$CLIENT" call-void-as-uid 1 "$BUS" /org/finit/service/keventd \
+    org.finit.Service1 Restart >/tmp/dbus-svcauthz.out 2>&1
+svc_authz_rc=$?
+set -e
+assert "Non-root Service1.Restart rejected (rc=$svc_authz_rc)" \
+    "$svc_authz_rc" -eq 1
+case "$(cat /tmp/dbus-svcauthz.out)" in
+    *AccessDenied*) assert "Service1 authz fires" 0 -eq 0 ;;
+    *) fail "Expected AccessDenied, got: $(cat /tmp/dbus-svcauthz.out)" ;;
+esac
+
 # ---------- Error reply ----------
 
 say "Unknown method gets an org.freedesktop.DBus.Error.* reply"

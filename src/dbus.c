@@ -37,6 +37,7 @@
 #include <uev/uev.h>
 
 #include "ink.h"
+#include "path.h"
 
 #include "finit.h"
 #include "conf.h"
@@ -131,6 +132,13 @@ static void accept_cb(uev_t *w, void *arg, int events)
 
 /* ---------- org.finit.Manager1 ---------- */
 
+/* Forward decl + buffer-size constant — both consumed by Manager1
+ * handlers below, defined in the Service1 block further down. */
+#define SERVICE_PATH_PREFIX "/org/finit/service/"
+#define SERVICE_PATH_PREFIX_LEN (sizeof(SERVICE_PATH_PREFIX) - 1)
+#define FINIT_SVC_PATH_MAX 512
+static int service_path_for(svc_t *svc, char *buf, size_t bufsz);
+
 static int manager_list_services(ink_call_t *call, void *userdata)
 {
 	ink_writer_t *w;
@@ -151,6 +159,37 @@ static int manager_list_services(ink_call_t *call, void *userdata)
 		ink_w_string(w, ident);
 	}
 	ink_w_array_end(w);
+	return 0;
+}
+
+static int manager_get_service(ink_call_t *call, void *userdata)
+{
+	const char *ident;
+	svc_t      *svc;
+	char        path[FINIT_SVC_PATH_MAX];
+	ink_writer_t *w;
+
+	(void)userdata;
+
+	if (ink_call_read_string(call, &ident) < 0)
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"expected (s)");
+
+	svc = svc_find_by_str(ident);
+	if (!svc)
+		return ink_call_reply_error(call,
+			"org.finit.Error.NoSuchService", ident);
+
+	if (service_path_for(svc, path, sizeof(path)) < 0)
+		return ink_call_reply_error(call,
+			"org.finit.Error.Failed",
+			"Path encoding overflow");
+
+	w = ink_call_reply(call);
+	if (!w)
+		return -1;
+	ink_w_path(w, path);
 	return 0;
 }
 
@@ -312,6 +351,8 @@ static int manager_halt    (ink_call_t *c, void *u) { (void)u; return dbus_shutd
 static const ink_method_t manager_methods[] = {
 	{ .name = "ListServices", .in_sig = "",  .out_sig = "as",
 	  .handler = manager_list_services },
+	{ .name = "GetService",   .in_sig = "s", .out_sig = "o",
+	  .handler = manager_get_service },
 	{ .name = "Start",        .in_sig = "s", .out_sig = "",
 	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_start },
 	{ .name = "Stop",         .in_sig = "s", .out_sig = "",
@@ -335,6 +376,111 @@ static const ink_vtable_t manager_vtable = {
 	.interface = "org.finit.Manager1",
 	.methods   = manager_methods,
 };
+
+/* ---------- org.finit.Service1 (one object per service) ----------
+ *
+ * Per-service object at /org/finit/service/<encoded-identity>.
+ * The vtable's `userdata` is the svc_t * for the specific service.
+ * Registration is driven dynamically from svc_new()/svc_del() via
+ * dbus_register_service() / dbus_unregister_service() below. */
+
+/* SERVICE_PATH_PREFIX / SERVICE_PATH_PREFIX_LEN / FINIT_SVC_PATH_MAX
+ * defined near the top of the file so Manager1.GetService can refer
+ * to them. */
+
+static int service_action_method(ink_call_t *call, void *userdata,
+				 int (*action)(svc_t *, void *))
+{
+	svc_t *svc = userdata;
+
+	if (!svc)
+		return ink_call_reply_error(call,
+			"org.finit.Error.NoSuchService",
+			"Service object no longer valid");
+
+	action(svc, NULL);
+	(void)ink_call_reply(call);
+	return 0;
+}
+
+static int service1_start  (ink_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_start);   }
+static int service1_stop   (ink_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_stop);    }
+static int service1_restart(ink_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_restart); }
+
+static int service1_reload(ink_call_t *call, void *userdata)
+{
+	svc_t *svc = userdata;
+
+	if (!svc)
+		return ink_call_reply_error(call,
+			"org.finit.Error.NoSuchService",
+			"Service object no longer valid");
+
+	service_reload(svc);
+	(void)ink_call_reply(call);
+	return 0;
+}
+
+static const ink_method_t service_methods[] = {
+	{ .name = "Start",   .in_sig = "", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_start   },
+	{ .name = "Stop",    .in_sig = "", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_stop    },
+	{ .name = "Restart", .in_sig = "", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_restart },
+	{ .name = "Reload",  .in_sig = "", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_reload  },
+	{ NULL, NULL, NULL, 0, NULL }
+};
+
+static const ink_vtable_t service_vtable = {
+	.interface = "org.finit.Service1",
+	.methods   = service_methods,
+};
+
+/* Build the canonical object path for a service.  Identity is
+ * "name" for single-instance services, "name:id" otherwise. */
+static int service_path_for(svc_t *svc, char *buf, size_t bufsz)
+{
+	char ident[MAX_IDENT_LEN];
+	size_t plen = SERVICE_PATH_PREFIX_LEN;
+	int    enc;
+
+	if (bufsz <= plen)
+		return -1;
+	memcpy(buf, SERVICE_PATH_PREFIX, plen);
+
+	svc_ident(svc, ident, sizeof(ident));
+	enc = ink_path_encode(ident, buf + plen, bufsz - plen);
+	if (enc < 0)
+		return -1;
+	return (int)plen + enc;
+}
+
+void dbus_register_service(svc_t *svc)
+{
+	char path[FINIT_SVC_PATH_MAX];
+
+	if (!server || !svc)
+		return;
+	if (service_path_for(svc, path, sizeof(path)) < 0)
+		return;
+
+	if (ink_server_add_object(server, path, &service_vtable, svc) < 0)
+		logit(LOG_WARNING, "dbus: failed registering %s", path);
+}
+
+void dbus_unregister_service(svc_t *svc)
+{
+	char path[FINIT_SVC_PATH_MAX];
+
+	if (!server || !svc)
+		return;
+	if (service_path_for(svc, path, sizeof(path)) < 0)
+		return;
+
+	(void)ink_server_remove_object(server, path);
+}
 
 /* ---------- init / exit ---------- */
 
@@ -361,6 +507,18 @@ int dbus_init(uev_ctx_t *ctx)
 		ink_server_free(server);
 		server = NULL;
 		return 1;
+	}
+
+	/* Register Service1 objects for every service already loaded.
+	 * Subsequent svc_new()/svc_del() calls into
+	 * dbus_register_service()/dbus_unregister_service(). */
+	{
+		svc_t *iter = NULL;
+		svc_t *svc;
+
+		for (svc = svc_iterator(&iter, 1); svc;
+		     svc = svc_iterator(&iter, 0))
+			dbus_register_service(svc);
 	}
 
 	return 0;

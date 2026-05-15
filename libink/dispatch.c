@@ -24,6 +24,31 @@ static struct ink_object *find_object(ink_server_t *srv, const char *path)
 	return NULL;
 }
 
+int ink_server_remove_object(ink_server_t *srv, const char *path)
+{
+	struct ink_object       *o;
+	struct ink_vtable_entry *e;
+
+	if (!srv || !path) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	o = find_object(srv, path);
+	if (!o) {
+		errno = ENOENT;
+		return -1;
+	}
+
+	while ((e = TAILQ_FIRST(&o->vtables))) {
+		TAILQ_REMOVE(&o->vtables, e, link);
+		free(e);
+	}
+	TAILQ_REMOVE(&srv->objects, o, link);
+	free(o);
+	return 0;
+}
+
 int ink_server_add_object(ink_server_t *srv, const char *path,
 			  const ink_vtable_t *vt, void *userdata)
 {

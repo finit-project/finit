@@ -75,6 +75,10 @@ typedef struct {
 int ink_server_add_object(ink_server_t *server, const char *path,
 			  const ink_vtable_t *vt, void *userdata);
 
+/* Remove every vtable registered at `path` and free the object.
+ * Returns 0 if the object existed, -1 (errno=ENOENT) otherwise. */
+int ink_server_remove_object(ink_server_t *server, const char *path);
+
 /* ----------  call accessors  ---------- */
 
 const char *ink_call_path     (const ink_call_t *call);

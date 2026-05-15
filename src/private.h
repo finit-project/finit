@@ -49,6 +49,8 @@ int          api_exit         (void);
 #ifdef HAVE_DBUS
 int          dbus_init        (uev_ctx_t *ctx);
 int          dbus_exit        (void);
+void         dbus_register_service  (svc_t *svc);
+void         dbus_unregister_service(svc_t *svc);
 #endif
 void         conf_flush_events(void);
 

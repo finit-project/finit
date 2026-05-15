@@ -1443,17 +1443,65 @@ int service_stop(svc_t *svc)
 }
 
 /**
- * service_reload - Reload a service
+ * service_reload - Request reload of a service, driven by the state machine
  * @svc: Service to reload
  *
- * This function does some basic checks of the runtime state of Finit
- * and a sanity check of the @svc before sending %SIGHUP or calling
- * the reload:script command.
+ * Mark a service dirty so the state machine will (re-)apply its
+ * configuration, then advance the state machine.  For services that
+ * don't handle SIGHUP this also clears the readiness condition and
+ * the pidfile/none-notify readiness flag so dependents are properly
+ * notified once the service comes back.
+ *
+ * Returns:
+ * POSIX OK(0) on success, non-zero if @svc is NULL.
+ */
+int service_reload(svc_t *svc)
+{
+	if (!svc)
+		return 1;
+
+	if (svc_is_blocked(svc))
+		svc_start(svc);
+	else
+		service_timeout_cancel(svc);
+
+	/*
+	 * Clear conditions before reload to ensure dependent services
+	 * are properly updated.  Only needed when the service does NOT
+	 * support SIGHUP (noreload), because then it will be stopped
+	 * and restarted, so conditions genuinely go away.  When the
+	 * service handles SIGHUP, its PID and pidfile persist, so the
+	 * condition stays valid and dependents should not be disrupted.
+	 *
+	 * Note: only clear 'ready' for services where the pidfile
+	 * inotify handler reasserts it (pid/none).  For s6/systemd
+	 * services readiness relies on their respective notification
+	 * mechanism which may not re-trigger on SIGHUP.
+	 */
+	if (svc_is_noreload(svc)) {
+		svc_cond_clear(svc);
+		if (svc->notify == SVC_NOTIFY_PID || svc->notify == SVC_NOTIFY_NONE)
+			service_ready(svc, 0);
+	}
+
+	svc_mark_dirty(svc);
+	service_step(svc);
+
+	return 0;
+}
+
+/**
+ * service_reload_apply - Perform the actual reload of a running service
+ * @svc: Service to reload
+ *
+ * Low-level reload step: sends %SIGHUP or runs the reload:script
+ * command.  Called by the state machine when a service marked
+ * reload-pending by service_reload() reaches the right state.
  *
  * Returns:
  * POSIX OK(0) or non-zero on error.
  */
-static int service_reload(svc_t *svc)
+static int service_reload_apply(svc_t *svc)
 {
 	const char *id = svc_ident(svc, NULL, 0);
 	int do_progress = 1;
@@ -3384,7 +3432,7 @@ restart:
 					if (sm_in_reload())
 						break;
 
-					service_reload(svc);
+					service_reload_apply(svc);
 				}
 
 				svc_mark_clean(svc);
@@ -3422,7 +3470,7 @@ restart:
 				if (svc_is_noreload(svc))
 					service_stop(svc);
 				else
-					service_reload(svc);
+					service_reload_apply(svc);
 				break;
 			}
 

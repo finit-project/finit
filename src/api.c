@@ -113,38 +113,7 @@ static int restart(svc_t *svc, void *user_data)
 static int reload(svc_t *svc, void *user_data)
 {
 	(void)user_data;
-
-	if (!svc)
-		return 1;
-
-	if (svc_is_blocked(svc))
-		svc_start(svc);
-	else
-		service_timeout_cancel(svc);
-
-	/*
-	 * Clear conditions before reload to ensure dependent services
-	 * are properly updated.  Only needed when the service does NOT
-	 * support SIGHUP (noreload), because then it will be stopped
-	 * and restarted, so conditions genuinely go away.  When the
-	 * service handles SIGHUP, its PID and pidfile persist, so the
-	 * condition stays valid and dependents should not be disrupted.
-	 *
-	 * Note: only clear 'ready' for services where the pidfile
-	 * inotify handler reasserts it (pid/none).  For s6/systemd
-	 * services readiness relies on their respective notification
-	 * mechanism which may not re-trigger on SIGHUP.
-	 */
-	if (svc_is_noreload(svc)) {
-		svc_cond_clear(svc);
-		if (svc->notify == SVC_NOTIFY_PID || svc->notify == SVC_NOTIFY_NONE)
-			service_ready(svc, 0);
-	}
-
-	svc_mark_dirty(svc);
-	service_step(svc);
-
-	return 0;
+	return service_reload(svc);
 }
 
 static int do_stop   (char *buf, size_t len) { return call(stop,    buf, len); }

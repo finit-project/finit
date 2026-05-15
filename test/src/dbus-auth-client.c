@@ -428,12 +428,15 @@ static int read_reply(int fd, struct reply *r)
 	return 0;
 }
 
-/* Decode a body containing exactly one "s" — write into out, return 0. */
+/* Decode a body containing exactly one "s" or "o" -- the wire form
+ * is identical for both (u32 length + bytes + nul). */
 static int decode_string(struct reply *r, char *out, size_t outsz)
 {
 	uint32_t len;
 
-	if (strcmp(r->signature, "s") != 0 || r->body_len < 5)
+	if (r->body_len < 5)
+		return -1;
+	if (strcmp(r->signature, "s") != 0 && strcmp(r->signature, "o") != 0)
 		return -1;
 	len = (uint32_t)r->body[0]
 	    | ((uint32_t)r->body[1] << 8)
@@ -625,6 +628,52 @@ static int mode_call_void(int argc, char *argv[])
 	return rc;
 }
 
+/* get-service <sock> <identity>
+ *
+ * Calls Manager1.GetService(identity) and prints the returned
+ * object path.  Exit 0 on success, 1 on server error, 2 transport. */
+static int mode_get_service(int argc, char *argv[])
+{
+	struct reply r;
+	char path[256];
+	int  rc;
+
+	if (argc != 4) return 2;
+	rc = do_call_arg(argv[2], "/org/finit/manager",
+			 "org.finit.Manager1", "GetService",
+			 "s", argv[3], 0, &r);
+	if (rc != 0) return rc;
+	/* decode_string accepts both "s" and "o" — wire form is
+	 * identical; no need to pre-check the signature here. */
+	if (decode_string(&r, path, sizeof(path)) < 0)
+		return 2;
+	printf("%s\n", path);
+	return 0;
+}
+
+/* Drop effective uid to argv[2], parsed as decimal.  Returns 0 on
+ * success, 2 (the program's "transport error" code) on failure. */
+static int drop_uid_from_arg(const char *uid_arg, const char *progname)
+{
+	uid_t drop_to;
+	char *ep = NULL;
+	long  v;
+
+	errno = 0;
+	v = strtol(uid_arg, &ep, 10);
+	if (errno || !ep || *ep != '\0' || v < 0 || v > 65535) {
+		fprintf(stderr, "%s: bad uid: %s\n", progname, uid_arg);
+		return 2;
+	}
+	drop_to = (uid_t)v;
+
+	if (setuid(drop_to) < 0) {
+		perror("setuid");
+		return 2;
+	}
+	return 0;
+}
+
 /* call-s-as-uid <uid> <sock> <obj> <iface> <method> <arg>
  *
  * Drops effective uid to <uid> (must work inside the test
@@ -634,28 +683,29 @@ static int mode_call_void(int argc, char *argv[])
 static int mode_call_s_as_uid(int argc, char *argv[])
 {
 	struct reply r;
-	uid_t  drop_to;
-	char  *ep = NULL;
-	long   v;
-	int    rc;
+	int rc;
 
 	if (argc != 8) return 2;
-
-	errno = 0;
-	v = strtol(argv[2], &ep, 10);
-	if (errno || !ep || *ep != '\0' || v < 0 || v > 65535) {
-		fprintf(stderr, "%s: bad uid: %s\n", argv[0], argv[2]);
-		return 2;
-	}
-	drop_to = (uid_t)v;
-
-	if (setuid(drop_to) < 0) {
-		perror("setuid");
-		return 2;
-	}
-
+	if ((rc = drop_uid_from_arg(argv[2], argv[0])) != 0)
+		return rc;
 	rc = do_call_arg(argv[3], argv[4], argv[5], argv[6],
 			 "s", argv[7], 0, &r);
+	if (rc == 0)
+		printf("OK\n");
+	return rc;
+}
+
+/* call-void-as-uid <uid> <sock> <obj> <iface> <method> */
+static int mode_call_void_as_uid(int argc, char *argv[])
+{
+	struct reply r;
+	int rc;
+
+	if (argc != 7) return 2;
+	if ((rc = drop_uid_from_arg(argv[2], argv[0])) != 0)
+		return rc;
+	rc = do_call_arg(argv[3], argv[4], argv[5], argv[6],
+			 NULL, NULL, 0, &r);
 	if (rc == 0)
 		printf("OK\n");
 	return rc;
@@ -685,7 +735,9 @@ int main(int argc, char *argv[])
 	if (strcmp(argv[1], "liststrings") == 0) return mode_liststrings(argc, argv);
 	if (strcmp(argv[1], "call-s")        == 0) return mode_call_s(argc, argv);
 	if (strcmp(argv[1], "call-void")     == 0) return mode_call_void(argc, argv);
-	if (strcmp(argv[1], "call-s-as-uid") == 0) return mode_call_s_as_uid(argc, argv);
+	if (strcmp(argv[1], "call-s-as-uid")    == 0) return mode_call_s_as_uid(argc, argv);
+	if (strcmp(argv[1], "call-void-as-uid") == 0) return mode_call_void_as_uid(argc, argv);
+	if (strcmp(argv[1], "get-service")      == 0) return mode_get_service(argc, argv);
 	if (strcmp(argv[1], "unknown")     == 0) return mode_unknown(argc, argv);
 	fprintf(stderr, "%s: unknown mode '%s'\n", argv[0], argv[1]);
 	return 2;
