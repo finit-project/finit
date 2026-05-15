@@ -8,7 +8,7 @@ ACLOCAL_AMFLAGS    = -I m4
 # after src is fine.
 SUBDIRS            = man plugins
 if DBUS
-SUBDIRS           += libink
+SUBDIRS           += libink dbus-1
 endif
 SUBDIRS           += src system tmpfiles.d
 dist_doc_DATA      = README.md LICENSE contrib/finit.conf

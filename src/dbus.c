@@ -88,6 +88,39 @@ static void peer_cb(uev_t *w, void *arg, int events)
 		peer_drop(p);
 }
 
+/* Wrap an authenticated connection in a struct peer, insert into the
+ * peer list, and register an event-loop watcher.  Enforces
+ * DBUS_MAX_PEERS.  Closes the connection and returns NULL on failure.
+ * Used by both the accept path and the system-bus attach path. */
+static struct peer *peer_register(uev_ctx_t *ctx, link_connection_t *conn)
+{
+	struct peer *p;
+
+	if (peer_count >= DBUS_MAX_PEERS) {
+		logit(LOG_WARNING, "D-Bus peer cap reached (%zu), dropping",
+		      peer_count);
+		link_connection_close(conn);
+		return NULL;
+	}
+
+	p = calloc(1, sizeof(*p));
+	if (!p) {
+		link_connection_close(conn);
+		return NULL;
+	}
+
+	p->conn = conn;
+	TAILQ_INSERT_TAIL(&peers, p, link);
+	peer_count++;
+
+	if (uev_io_init(ctx, &p->watcher, peer_cb, p,
+			link_connection_get_fd(conn), UEV_READ)) {
+		peer_drop(p);
+		return NULL;
+	}
+	return p;
+}
+
 static void accept_cb(uev_t *w, void *arg, int events)
 {
 	(void)arg;
@@ -99,7 +132,6 @@ static void accept_cb(uev_t *w, void *arg, int events)
 
 	for (;;) {
 		link_connection_t *conn = NULL;
-		struct peer *p;
 
 		if (link_server_accept(server, &conn) < 0) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK)
@@ -107,29 +139,8 @@ static void accept_cb(uev_t *w, void *arg, int events)
 			break;
 		}
 
-		if (peer_count >= DBUS_MAX_PEERS) {
-			logit(LOG_WARNING, "D-Bus peer cap reached (%zu), dropping",
-			      peer_count);
-			link_connection_close(conn);
-			continue;
-		}
-
-		p = calloc(1, sizeof(*p));
-		if (!p) {
-			link_connection_close(conn);
-			err(1, "Out of memory accepting D-Bus client");
-			break;
-		}
-
-		p->conn = conn;
-		TAILQ_INSERT_TAIL(&peers, p, link);
-		peer_count++;
-
-		if (uev_io_init(w->ctx, &p->watcher, peer_cb, p,
-				link_connection_get_fd(conn), UEV_READ)) {
-			err(1, "Failed registering D-Bus peer watcher");
-			peer_drop(p);
-		}
+		if (!peer_register(w->ctx, conn))
+			continue;	/* logged inside */
 	}
 }
 
@@ -874,6 +885,101 @@ void dbus_notify_condition_change(const char *name, const char *state)
 			 "ConditionChanged", "ss", body, (size_t)blen);
 }
 
+/* ---------- system-bus attach (opportunistic) ----------
+ *
+ * If /var/run/dbus/system_bus_socket is reachable, libink connects to
+ * the system bus as a regular client, claims org.finit as a well-known
+ * name, then promotes the authenticated fd into a server-attached
+ * peer so the same vtables serve incoming method calls and outgoing
+ * signal fan-out reaches the system bus.
+ *
+ * peer_uid is set to (uid_t)-1 so LINK_METHOD_PRIVILEGED methods
+ * reject by default -- per-request sender uid lookup via
+ * GetConnectionUnixUser is a follow-up.  Read-only methods
+ * (ListServices, Properties.Get, Introspect, ...) work as expected.
+ *
+ * Caveat: the AUTH + Hello + RequestName round-trips run synchronously
+ * from dbus_init() in PID 1, so a hung dbus-daemon would block boot.
+ * The kernel has no default socket-level timeout; adding one (via
+ * SO_RCVTIMEO around the handshake, or threading a timeout through
+ * link_client_call) is a follow-up.  In practice dbus-daemon is rarely
+ * present on the embedded systems Finit primarily targets, and where
+ * it is present it is reliable. */
+
+#define SYSTEM_BUS_PATH    "/var/run/dbus/system_bus_socket"
+#define FINIT_BUS_NAME     "org.finit"
+/* DBUS_NAME_FLAG_DO_NOT_QUEUE: fail fast if the name is taken
+ * (something else owns org.finit -- shouldn't happen and we'd
+ * rather log than silently sit in the queue). */
+#define DBUS_NAME_FLAG_DO_NOT_QUEUE  0x04
+
+static int sysbus_request_name(link_client_t *c)
+{
+	const link_reply_t *r;
+	link_reader_t reader;
+	uint32_t result = 0;
+	int rc;
+
+	rc = link_client_call_v(c, "/org/freedesktop/DBus",
+				"org.freedesktop.DBus", "RequestName",
+				"su", FINIT_BUS_NAME,
+				(uint32_t)DBUS_NAME_FLAG_DO_NOT_QUEUE);
+	if (rc != LINK_CALL_OK)
+		return -1;
+
+	r = link_client_reply(c);
+	if (!r || !r->body)
+		return -1;
+	link_reader_init(&reader, r->body, r->body_len);
+	if (link_r_u32(&reader, &result) < 0)
+		return -1;
+
+	/* 1 = primary owner; 2/3/4 mean we didn't get the name */
+	return (result == 1) ? 0 : -1;
+}
+
+static void try_attach_system_bus(uev_ctx_t *ctx)
+{
+	link_client_t     *c;
+	link_connection_t *conn;
+	int rc;
+
+	c = link_client_open(SYSTEM_BUS_PATH);
+	if (!c) {
+		dbg("System bus unavailable at %s; skipping registration",
+		    SYSTEM_BUS_PATH);
+		return;
+	}
+
+	rc = link_client_call_v(c, "/org/freedesktop/DBus",
+				"org.freedesktop.DBus", "Hello", NULL);
+	if (rc != LINK_CALL_OK) {
+		dbg("System-bus Hello failed (rc=%d); skipping", rc);
+		link_client_close(c);
+		return;
+	}
+
+	if (sysbus_request_name(c) < 0) {
+		logit(LOG_WARNING, "Failed to claim %s on system bus", FINIT_BUS_NAME);
+		link_client_close(c);
+		return;
+	}
+
+	/* link_server_attach owns the fd from this point on whether it
+	 * succeeds or fails, so the steal-then-attach pair has no leak
+	 * window. */
+	conn = link_server_attach(server, link_client_steal_fd(c), (uid_t)-1);
+	if (!conn)
+		return;
+
+	if (!peer_register(ctx, conn)) {
+		logit(LOG_WARNING, "Failed registering system-bus peer");
+		return;
+	}
+
+	logit(LOG_NOTICE, "Registered %s on system bus", FINIT_BUS_NAME);
+}
+
 /* ---------- init / exit ---------- */
 
 int dbus_init(uev_ctx_t *ctx)
@@ -920,6 +1026,8 @@ int dbus_init(uev_ctx_t *ctx)
 		     svc = svc_iterator(&iter, 0))
 			dbus_register_service(svc);
 	}
+
+	try_attach_system_bus(ctx);
 
 	return 0;
 }

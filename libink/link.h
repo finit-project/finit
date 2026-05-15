@@ -96,6 +96,18 @@ int   link_server_get_fd(const link_server_t *server);
 
 int   link_server_accept(link_server_t *server, link_connection_t **conn);
 
+/* Insert an externally-authenticated fd into the server's connection
+ * set.  Used to integrate an outbound peer (e.g. a client-side
+ * handshake against an external dbus-daemon) so the same dispatch +
+ * signal-fan-out machinery covers it.  `peer_uid` becomes what
+ * privileged-method checks see; pass (uid_t)-1 to make all
+ * LINK_METHOD_PRIVILEGED methods reject by default.
+ *
+ * On success the connection takes ownership of `fd`.  On any failure
+ * `fd` is closed before the function returns NULL, so callers never
+ * have to track partial state. */
+link_connection_t *link_server_attach(link_server_t *server, int fd, uid_t peer_uid);
+
 int   link_connection_get_fd  (const link_connection_t *conn);
 uid_t link_connection_get_uid (const link_connection_t *conn);
 int   link_connection_process (link_connection_t *conn);
@@ -203,6 +215,13 @@ int link_connection_emit_signal(link_connection_t *conn,
  * transport if it has one). */
 link_client_t *link_client_open(const char *path);
 void           link_client_close(link_client_t *c);
+
+/* Detach the authenticated socket from the client and return the raw
+ * fd; subsequent link_client_close on `c` is invalid because the
+ * structure has already been freed.  Used by callers (e.g. system-bus
+ * integration) that want to promote an outbound client connection
+ * into a server-attached peer via link_server_attach(). */
+int link_client_steal_fd(link_client_t *c);
 
 /* Status codes returned by link_client_call(_v). */
 #define LINK_CALL_OK     0   /* method-return received */

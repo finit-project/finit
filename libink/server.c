@@ -5,6 +5,7 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -159,4 +160,45 @@ int link_server_accept(link_server_t *srv, link_connection_t **out)
 
 	*out = conn;
 	return 0;
+}
+
+link_connection_t *link_server_attach(link_server_t *srv, int fd, uid_t peer_uid)
+{
+	link_connection_t *conn;
+	int flags;
+
+	/* On entry we always own `fd` -- close it on every failure path
+	 * so callers don't have to track whether we touched fcntl state. */
+	if (!srv || fd < 0) {
+		if (fd >= 0)
+			close_save_errno(fd);
+		errno = EINVAL;
+		return NULL;
+	}
+
+	/* Match server_accept's fd setup: CLOEXEC first (so a fork-and-
+	 * exec between the two calls cannot leak the fd), then NONBLOCK
+	 * so process_binary's read loop can drain without hanging. */
+	flags = fcntl(fd, F_GETFD, 0);
+	if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0)
+		goto err_close;
+	flags = fcntl(fd, F_GETFL, 0);
+	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		goto err_close;
+
+	conn = calloc(1, sizeof(*conn));
+	if (!conn)
+		goto err_close;
+
+	conn->fd       = fd;
+	conn->auth     = LINK_AUTH_DONE;	/* caller already handshook */
+	conn->server   = srv;
+	conn->peer_uid = peer_uid;
+	__auth_generate_guid(conn->guid);
+
+	return conn;
+
+err_close:
+	close_save_errno(fd);
+	return NULL;
 }

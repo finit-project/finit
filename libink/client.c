@@ -76,6 +76,18 @@ void link_client_close(link_client_t *c)
 	free(c);
 }
 
+int link_client_steal_fd(link_client_t *c)
+{
+	int fd;
+
+	if (!c)
+		return -1;
+	fd    = c->fd;
+	c->fd = -1;
+	free(c);
+	return fd;
+}
+
 /* read_full / send_all live in libink/io.c. */
 #define read_full(fd, buf, len)  __io_read_full ((fd), (buf), (len))
 #define send_all(fd, buf, len)   __io_write_all((fd), (buf), (len))
