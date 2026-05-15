@@ -46,6 +46,7 @@ int  __r_string(struct link_reader *r, const char **out);  /* "s" */
 int  __r_path  (struct link_reader *r, const char **out);  /* "o" */
 int  __r_variant_string(struct link_reader *r, const char **out); /* "v" containing "s" */
 int  __r_align (struct link_reader *r, size_t n);  /* skip to n-byte boundary */
+int  __r_array_begin(struct link_reader *r, size_t *out_end);
 int  __r_done  (const struct link_reader *r);
 
 #endif /* LIBINK_MARSHAL_H_ */

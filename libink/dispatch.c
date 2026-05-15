@@ -314,6 +314,7 @@ int  link_r_string(link_reader_t *r, const char **o)  { return __r_string(r, o);
 int  link_r_path  (link_reader_t *r, const char **o)  { return __r_path  (r, o); }
 int  link_r_variant_string(link_reader_t *r, const char **o) { return __r_variant_string(r, o); }
 int  link_r_align (link_reader_t *r, size_t n)        { return __r_align (r, n); }
+int  link_r_array_begin(link_reader_t *r, size_t *e)  { return __r_array_begin(r, e); }
 int  link_r_done  (const link_reader_t *r)            { return __r_done  (r);    }
 size_t link_r_pos (const link_reader_t *r)            { return r->off;           }
 

@@ -299,3 +299,23 @@ int __r_align(struct link_reader *r, size_t n)
 {
 	return r_skip_align(r, n);
 }
+
+/* Begin reading an "a<T>" array.  Reads the u32 byte-length prefix
+ * and sets *out_end to the absolute reader offset at which the array
+ * ends.  Caller loops while r->off < *out_end.  Returns -1 on a
+ * truncated or oversized array length. */
+int __r_array_begin(struct link_reader *r, size_t *out_end)
+{
+	uint32_t array_bytes;
+	size_t   end;
+
+	if (__r_u32(r, &array_bytes) < 0)
+		return -1;
+	end = r->off + (size_t)array_bytes;
+	if (end > r->cap) {
+		r->err = 1;
+		return -1;
+	}
+	*out_end = end;
+	return 0;
+}

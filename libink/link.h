@@ -214,6 +214,14 @@ int link_connection_emit_signal(link_connection_t *conn,
  * Returns NULL on any failure (caller can fall back to another
  * transport if it has one). */
 link_client_t *link_client_open(const char *path);
+
+/* As link_client_open but applies SO_SNDTIMEO + SO_RCVTIMEO before
+ * the connect/AUTH handshake.  After link_server_attach flips the fd
+ * to non-blocking the timeout is silently inert; it only protects
+ * the synchronous open path against a hung peer.  timeout_ms == 0
+ * disables the budget (same behaviour as link_client_open). */
+link_client_t *link_client_open_timeout(const char *path, int timeout_ms);
+
 void           link_client_close(link_client_t *c);
 
 /* Detach the authenticated socket from the client and return the raw
@@ -266,6 +274,14 @@ int link_client_call_v(link_client_t *c,
 
 const link_reply_t *link_client_reply(link_client_t *c);
 
+/* Convenience accessors for the common case where a reply carries
+ * exactly one string ("s" or "o") or one u32 ("u").  They wrap the
+ * link_reader_init + link_r_* pattern; on success return 0 and
+ * populate *out, on parse failure or missing body return -1.  Use
+ * link_client_reply + link_reader_init directly for richer payloads. */
+int link_reply_get_string(const link_reply_t *r, const char **out);
+int link_reply_get_u32   (const link_reply_t *r, uint32_t   *out);
+
 /* Wait up to `timeout_ms` milliseconds for the next inbound message
  * (typically a SIGNAL delivered after an AddMatch subscription), and
  * populate the same view returned by link_client_reply().
@@ -317,11 +333,17 @@ int    link_r_variant_string(link_reader_t *r, const char **out); /* "v" contain
 int    link_r_align   (link_reader_t *r, size_t n);  /* skip to next n-byte boundary */
 int    link_r_done    (const link_reader_t *r);
 
-/* Byte offset of the next read inside the original body buffer.  Used
- * to detect end-of-array when walking "a<T>" payloads: read the array
- * byte-length prefix with link_r_u32 first, record (pos+length) as the
- * end, then loop while link_r_pos < end.  For "a{T}" (dict-entry
- * arrays) call link_r_align(r, 8) at the top of each iteration. */
+/* Begin reading an "a<T>" array.  On success returns 0 and sets
+ * *out_end to the absolute reader offset at which the array ends;
+ * caller loops while link_r_pos < *out_end.  For dict-entry arrays
+ * ("a{T}") call link_r_align(r, 8) at the top of each iteration --
+ * the element-alignment skip from the array prefix only covers the
+ * first entry. */
+int    link_r_array_begin(link_reader_t *r, size_t *out_end);
+
+/* Byte offset of the next read inside the original body buffer.
+ * Use together with the *out_end returned by link_r_array_begin to
+ * walk the elements of an "a<T>" payload. */
 size_t link_r_pos     (const link_reader_t *r);
 
 #ifdef __cplusplus

@@ -175,8 +175,6 @@ static int drop_uid(const char *uid_arg, const char *progname)
 static int mode_hello(int argc, char *argv[])
 {
 	link_client_t *c;
-	const link_reply_t *r;
-	link_reader_t reader;
 	const char *name;
 	int rc;
 
@@ -188,9 +186,7 @@ static int mode_hello(int argc, char *argv[])
 				"org.freedesktop.DBus", "Hello", NULL);
 	rc = report_rc(c, rc);
 	if (rc == 0) {
-		r = link_client_reply(c);
-		link_reader_init(&reader, r->body, r->body_len);
-		if (link_r_string(&reader, &name) == 0)
+		if (link_reply_get_string(link_client_reply(c), &name) == 0)
 			printf("%s\n", name);
 		else
 			rc = 2;
@@ -202,8 +198,6 @@ static int mode_hello(int argc, char *argv[])
 static int mode_introspect(int argc, char *argv[])
 {
 	link_client_t *c;
-	const link_reply_t *r;
-	link_reader_t reader;
 	const char *xml;
 	int rc;
 
@@ -216,9 +210,7 @@ static int mode_introspect(int argc, char *argv[])
 				"Introspect", NULL);
 	rc = report_rc(c, rc);
 	if (rc == 0) {
-		r = link_client_reply(c);
-		link_reader_init(&reader, r->body, r->body_len);
-		if (link_r_string(&reader, &xml) == 0)
+		if (link_reply_get_string(link_client_reply(c), &xml) == 0)
 			printf("%s\n", xml);
 		else
 			rc = 2;
@@ -227,23 +219,17 @@ static int mode_introspect(int argc, char *argv[])
 	return rc;
 }
 
-/* Decode body with signature "as" -- u32 array byte-len, then "s" strings.
- * libink's public reader doesn't yet have an array helper, so we walk
- * the wire form with link_r_u32 + link_r_string + link_r_pos. */
+/* Decode body with signature "as", print one string per line. */
 static int print_string_array(const link_reply_t *r)
 {
 	link_reader_t reader;
-	uint32_t      array_len;
 	size_t        end;
 
 	if (!r || !r->signature || strcmp(r->signature, "as") != 0)
 		return -1;
 
 	link_reader_init(&reader, r->body, r->body_len);
-	if (link_r_u32(&reader, &array_len) < 0)
-		return -1;
-	end = link_r_pos(&reader) + array_len;
-	if (end > r->body_len)
+	if (link_r_array_begin(&reader, &end) < 0)
 		return -1;
 
 	while (link_r_pos(&reader) < end) {
@@ -330,8 +316,6 @@ static int mode_call_void_as_uid(int argc, char *argv[])
 static int mode_get_service(int argc, char *argv[])
 {
 	link_client_t *c;
-	const link_reply_t *r;
-	link_reader_t reader;
 	const char *path;
 	int rc;
 
@@ -344,11 +328,8 @@ static int mode_get_service(int argc, char *argv[])
 				"s", argv[3]);
 	rc = report_rc(c, rc);
 	if (rc == 0) {
-		r = link_client_reply(c);
-		link_reader_init(&reader, r->body, r->body_len);
-		/* Reply signature is "o" but link_r_path / link_r_string
-		 * have the same wire form. */
-		if (link_r_path(&reader, &path) == 0)
+		/* Reply sig is "o", same wire form as "s". */
+		if (link_reply_get_string(link_client_reply(c), &path) == 0)
 			printf("%s\n", path);
 		else
 			rc = 2;

@@ -212,7 +212,6 @@ static int dbus_get_manager_props(const char *const *wanted, char **out, size_t 
 	link_client_t *c;
 	const link_reply_t *r;
 	link_reader_t reader;
-	uint32_t       array_bytes;
 	size_t         end;
 	int            rc;
 
@@ -235,12 +234,7 @@ static int dbus_get_manager_props(const char *const *wanted, char **out, size_t 
 	}
 
 	link_reader_init(&reader, r->body, r->body_len);
-	if (link_r_u32(&reader, &array_bytes) < 0) {
-		link_client_close(c);
-		return -1;
-	}
-	end = link_r_pos(&reader) + array_bytes;
-	if (end > r->body_len) {
+	if (link_r_array_begin(&reader, &end) < 0) {
 		link_client_close(c);
 		return -1;
 	}
@@ -445,14 +439,9 @@ static int cond_dbus_call(link_client_t **bus, condop_t op,
 				"s", arg);
 	if (rc == LINK_CALL_OK) {
 		if (op == COND_GET) {
-			const link_reply_t *r = link_client_reply(*bus);
-			link_reader_t reader;
-			const char   *state = NULL;
+			const char *state = NULL;
 
-			if (r && r->body) {
-				link_reader_init(&reader, r->body, r->body_len);
-				link_r_string(&reader, &state);
-			}
+			link_reply_get_string(link_client_reply(*bus), &state);
 			if (verbose && state)
 				puts(state);
 			*out_exit = (state && !strcmp(state, "on"))  ? 0

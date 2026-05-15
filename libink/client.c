@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -35,7 +36,7 @@ struct link_client {
 	size_t       rxlen;
 };
 
-link_client_t *link_client_open(const char *path)
+link_client_t *link_client_open_timeout(const char *path, int timeout_ms)
 {
 	struct sockaddr_un sun = { .sun_family = AF_UNIX };
 	link_client_t *c;
@@ -48,6 +49,20 @@ link_client_t *link_client_open(const char *path)
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0)
 		return NULL;
+
+	if (timeout_ms > 0) {
+		struct timeval tv = {
+			.tv_sec  =  timeout_ms / 1000,
+			.tv_usec = (timeout_ms % 1000) * 1000,
+		};
+		/* Cover both directions so the AUTH write and the
+		 * subsequent read both honour the budget.  setsockopt
+		 * failure is non-fatal -- the bus may still respond
+		 * quickly enough; we just lose the safety net. */
+		(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+		(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	}
+
 	if (connect(fd, (struct sockaddr *)&sun, sizeof(sun)) < 0) {
 		close(fd);
 		return NULL;
@@ -65,6 +80,11 @@ link_client_t *link_client_open(const char *path)
 	c->fd          = fd;
 	c->next_serial = 1;
 	return c;
+}
+
+link_client_t *link_client_open(const char *path)
+{
+	return link_client_open_timeout(path, 0);
 }
 
 void link_client_close(link_client_t *c)
@@ -239,6 +259,30 @@ const link_reply_t *link_client_reply(link_client_t *c)
 	if (!c || !c->have_reply)
 		return NULL;
 	return &c->reply;
+}
+
+int link_reply_get_string(const link_reply_t *r, const char **out)
+{
+	link_reader_t reader;
+
+	if (out)
+		*out = NULL;
+	if (!r || !r->body || !out)
+		return -1;
+	link_reader_init(&reader, r->body, r->body_len);
+	return link_r_string(&reader, out);
+}
+
+int link_reply_get_u32(const link_reply_t *r, uint32_t *out)
+{
+	link_reader_t reader;
+
+	if (out)
+		*out = 0;
+	if (!r || !r->body || !out)
+		return -1;
+	link_reader_init(&reader, r->body, r->body_len);
+	return link_r_u32(&reader, out);
 }
 
 /* Marshal varargs into `body` (capacity `cap`) according to `sig`.

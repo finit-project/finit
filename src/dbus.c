@@ -898,16 +898,18 @@ void dbus_notify_condition_change(const char *name, const char *state)
  * GetConnectionUnixUser is a follow-up.  Read-only methods
  * (ListServices, Properties.Get, Introspect, ...) work as expected.
  *
- * Caveat: the AUTH + Hello + RequestName round-trips run synchronously
- * from dbus_init() in PID 1, so a hung dbus-daemon would block boot.
- * The kernel has no default socket-level timeout; adding one (via
- * SO_RCVTIMEO around the handshake, or threading a timeout through
- * link_client_call) is a follow-up.  In practice dbus-daemon is rarely
- * present on the embedded systems Finit primarily targets, and where
- * it is present it is reliable. */
+ * A bounded SO_SNDTIMEO/SO_RCVTIMEO budget is applied via
+ * link_client_open_timeout so a hung dbus-daemon can't stall boot;
+ * once the connection is attached and flipped to non-blocking, those
+ * timeouts are silently inert. */
 
 #define SYSTEM_BUS_PATH    "/var/run/dbus/system_bus_socket"
 #define FINIT_BUS_NAME     "org.finit"
+/* Budget for the synchronous AUTH + Hello + RequestName round-trips.
+ * If the system bus is alive but the daemon is wedged we'd rather
+ * give up after a couple of seconds than stall the rest of dbus_init
+ * (and through it, boot). */
+#define SYSTEM_BUS_TIMEOUT_MS 2000
 /* DBUS_NAME_FLAG_DO_NOT_QUEUE: fail fast if the name is taken
  * (something else owns org.finit -- shouldn't happen and we'd
  * rather log than silently sit in the queue). */
@@ -915,8 +917,6 @@ void dbus_notify_condition_change(const char *name, const char *state)
 
 static int sysbus_request_name(link_client_t *c)
 {
-	const link_reply_t *r;
-	link_reader_t reader;
 	uint32_t result = 0;
 	int rc;
 
@@ -926,14 +926,8 @@ static int sysbus_request_name(link_client_t *c)
 				(uint32_t)DBUS_NAME_FLAG_DO_NOT_QUEUE);
 	if (rc != LINK_CALL_OK)
 		return -1;
-
-	r = link_client_reply(c);
-	if (!r || !r->body)
+	if (link_reply_get_u32(link_client_reply(c), &result) < 0)
 		return -1;
-	link_reader_init(&reader, r->body, r->body_len);
-	if (link_r_u32(&reader, &result) < 0)
-		return -1;
-
 	/* 1 = primary owner; 2/3/4 mean we didn't get the name */
 	return (result == 1) ? 0 : -1;
 }
@@ -944,7 +938,7 @@ static void try_attach_system_bus(uev_ctx_t *ctx)
 	link_connection_t *conn;
 	int rc;
 
-	c = link_client_open(SYSTEM_BUS_PATH);
+	c = link_client_open_timeout(SYSTEM_BUS_PATH, SYSTEM_BUS_TIMEOUT_MS);
 	if (!c) {
 		dbg("System bus unavailable at %s; skipping registration",
 		    SYSTEM_BUS_PATH);
