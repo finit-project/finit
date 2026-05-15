@@ -36,10 +36,13 @@
 #include <sys/queue.h>
 #include <uev/uev.h>
 
+#include <ftw.h>
+
 #include "ink.h"
 #include "path.h"
 
 #include "finit.h"
+#include "cond.h"
 #include "conf.h"
 #include "log.h"
 #include "private.h"
@@ -547,6 +550,248 @@ void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
 				body, (size_t)blen);
 }
 
+/* ---------- org.finit.Cond1 ---------- */
+
+#define COND_PATH_OBJECT "/org/finit/cond"
+#define COND_INTERFACE   "org.finit.Cond1"
+
+/* Cond1.Set/Clear refuse anything that isn't a usr/ condition --
+ * pid/, sys/, hook/ are owned by Finit's state machine and giving
+ * clients write access there would let them corrupt service state.
+ * Bare names ("foo") are normalised to "usr/foo" the same way
+ * initctl does.  The returned pointer is valid for the duration
+ * of the caller's stack frame (`buf` must be at least 128 bytes). */
+static const char *normalise_usr_cond(const char *name, char *buf, size_t bufsz)
+{
+	const char *tail;
+
+	if (!name || !*name)
+		return NULL;
+	if (strchr(name, '.'))
+		return NULL;
+
+	if (strchr(name, '/')) {
+		if (strncmp(name, "usr/", 4) != 0)
+			return NULL;
+		tail = name + 4;
+		/* Match initctl's policy: no further slashes in the tail,
+		 * and no empty tail ("usr/" alone). */
+		if (!*tail || strchr(tail, '/'))
+			return NULL;
+		if (strlen(name) >= bufsz)
+			return NULL;
+		memcpy(buf, name, strlen(name) + 1);
+		return buf;
+	}
+
+	if ((size_t)snprintf(buf, bufsz, "usr/%s", name) >= bufsz)
+		return NULL;
+	return buf;
+}
+
+/* Reject names that would escape /run/finit/cond/.  cond_get(name)
+ * boils down to fopen(_PATH_COND + name), so without this check any
+ * caller can make PID 1 open arbitrary files -- a path traversal
+ * primitive that also stalls PID 1 if pointed at a FIFO or a slow
+ * device.  Legal cond names look like "usr/foo", "pid/sshd",
+ * "service/keventd/ready"; no leading slash, no ".." segment. */
+static int cond_name_valid(const char *name)
+{
+	const char *p;
+
+	if (!name || !*name || *name == '/')
+		return 0;
+	for (p = name; *p; p++) {
+		if (*p == '.' && p[1] == '.' &&
+		    (p[2] == '\0' || p[2] == '/'))
+			return 0;
+	}
+	return 1;
+}
+
+static int cond1_get(ink_call_t *call, void *userdata)
+{
+	const char    *name;
+	ink_writer_t  *w;
+
+	(void)userdata;
+
+	if (ink_call_read_string(call, &name) < 0)
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"expected (s)");
+	if (!cond_name_valid(name))
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"invalid condition name");
+
+	w = ink_call_reply(call);
+	if (!w)
+		return -1;
+	ink_w_string(w, condstr(cond_get(name)));
+	return 0;
+}
+
+static int cond1_set_or_clear(ink_call_t *call, int do_set)
+{
+	const char *name;
+	char        buf[128];
+	const char *full;
+
+	if (ink_call_read_string(call, &name) < 0)
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"expected (s)");
+
+	full = normalise_usr_cond(name, buf, sizeof(buf));
+	if (!full)
+		return ink_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"Set/Clear is restricted to usr/* conditions");
+
+	if (do_set)
+		/* cond_set_oneshot, not cond_set: a user-asserted condition
+		 * is a symlink to _PATH_RECONF, so it tracks the reconf
+		 * generation automatically and stays "on" across reloads
+		 * and runlevel switches.  cond_set() writes a fixed
+		 * generation that goes "flux" on the next reload -- wrong
+		 * semantics for user conditions, and what initctl cond set
+		 * has done forever via the filesystem path. */
+		cond_set_oneshot(full);
+	else
+		cond_clear(full);
+
+	(void)ink_call_reply(call);
+	return 0;
+}
+
+static int cond1_set  (ink_call_t *c, void *u) { (void)u; return cond1_set_or_clear(c, 1); }
+static int cond1_clear(ink_call_t *c, void *u) { (void)u; return cond1_set_or_clear(c, 0); }
+
+/* nftw() can't pass user data so a single static handle ferries the
+ * writer into the callback.  Safe because dispatch is single-threaded. */
+static ink_writer_t *cond_walk_writer;
+static int           cond_walk_dump;
+
+static int cond_walk_cb(const char *fpath, const struct stat *sb,
+			int tflag, struct FTW *ftwbuf)
+{
+	const char  *name;
+	const char  *state;
+	size_t       prefix_len;
+
+	(void)sb;
+	(void)ftwbuf;
+
+	if (tflag != FTW_F)
+		return 0;
+	if (!strcmp(fpath, _PATH_RECONF))
+		return 0;
+
+	prefix_len = strlen(_PATH_COND);
+	if (strlen(fpath) <= prefix_len)
+		return 0;
+	name = fpath + prefix_len;
+
+	if (cond_walk_dump) {
+		state = condstr(cond_get_path(fpath));
+		ink_w_struct_begin(cond_walk_writer);
+		ink_w_string(cond_walk_writer, name);
+		ink_w_string(cond_walk_writer, state);
+		ink_w_struct_end(cond_walk_writer);
+	} else {
+		ink_w_string(cond_walk_writer, name);
+	}
+	return 0;
+}
+
+static int cond1_list(ink_call_t *call, void *userdata)
+{
+	ink_writer_t *w;
+
+	(void)userdata;
+
+	w = ink_call_reply(call);
+	if (!w)
+		return -1;
+
+	ink_w_array_begin(w, 's');
+	cond_walk_writer = w;
+	cond_walk_dump   = 0;
+	(void)nftw(_PATH_COND, cond_walk_cb, 20, 0);
+	cond_walk_writer = NULL;
+	ink_w_array_end(w);
+	return 0;
+}
+
+static int cond1_dump(ink_call_t *call, void *userdata)
+{
+	ink_writer_t *w;
+
+	(void)userdata;
+
+	w = ink_call_reply(call);
+	if (!w)
+		return -1;
+
+	ink_w_array_begin(w, '(');
+	cond_walk_writer = w;
+	cond_walk_dump   = 1;
+	(void)nftw(_PATH_COND, cond_walk_cb, 20, 0);
+	cond_walk_writer = NULL;
+	ink_w_array_end(w);
+	return 0;
+}
+
+static const ink_method_t cond_methods[] = {
+	{ .name = "Get",   .in_sig = "s", .out_sig = "s",
+	  .handler = cond1_get },
+	{ .name = "Set",   .in_sig = "s", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = cond1_set },
+	{ .name = "Clear", .in_sig = "s", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = cond1_clear },
+	{ .name = "List",  .in_sig = "",  .out_sig = "as",
+	  .handler = cond1_list },
+	{ .name = "Dump",  .in_sig = "",  .out_sig = "a(ss)",
+	  .handler = cond1_dump },
+	{ NULL, NULL, NULL, 0, NULL }
+};
+
+static const ink_vtable_t cond_vtable = {
+	.interface = COND_INTERFACE,
+	.methods   = cond_methods,
+};
+
+/* ---------- signal emission: ConditionChanged ---------- */
+
+void dbus_notify_condition_change(const char *name, const char *state)
+{
+	uint8_t        body[256];
+	ink_writer_t   w;
+	struct peer   *p;
+	ssize_t        blen;
+
+	if (!server || !name || !state)
+		return;
+	if (TAILQ_EMPTY(&peers))
+		return;
+
+	ink_writer_init(&w, body, sizeof(body));
+	ink_w_string(&w, name);
+	ink_w_string(&w, state);
+	blen = ink_writer_finish(&w);
+	if (blen < 0)
+		return;
+
+	TAILQ_FOREACH(p, &peers, link)
+		(void)ink_connection_emit_signal(p->conn,
+				COND_PATH_OBJECT,
+				COND_INTERFACE,
+				"ConditionChanged",
+				"ss",
+				body, (size_t)blen);
+}
+
 /* ---------- init / exit ---------- */
 
 int dbus_init(uev_ctx_t *ctx)
@@ -561,6 +806,14 @@ int dbus_init(uev_ctx_t *ctx)
 	if (ink_server_add_object(server, "/org/finit/manager",
 				  &manager_vtable, NULL) < 0) {
 		err(1, "Failed registering Manager1 object");
+		ink_server_free(server);
+		server = NULL;
+		return 1;
+	}
+
+	if (ink_server_add_object(server, COND_PATH_OBJECT,
+				  &cond_vtable, NULL) < 0) {
+		err(1, "Failed registering Cond1 object");
 		ink_server_free(server);
 		server = NULL;
 		return 1;
