@@ -24,25 +24,15 @@
 #include <sys/random.h>
 #include <unistd.h>
 
-#include "ink-internal.h"
+#include "internal.h"
 
 static const char rejected_ext[] = "REJECTED EXTERNAL\r\n";
 
-static int write_all(int fd, const char *buf, size_t len)
-{
-	while (len > 0) {
-		ssize_t n = write(fd, buf, len);
+#define write_all(fd, buf, len)  __io_write_all((fd), (buf), (len))
 
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			return -1;
-		}
-		buf += n;
-		len -= (size_t)n;
-	}
-	return 0;
-}
+/* Shared by __auth_generate_guid (server) and __auth_client
+ * (client) for hex-encoding GUIDs and uid claims. */
+static const char hex_digits[] = "0123456789abcdef";
 
 static int reply(int fd, const char *line)
 {
@@ -54,9 +44,8 @@ static int reject(link_connection_t *conn)
 	return write_all(conn->fd, rejected_ext, sizeof(rejected_ext) - 1);
 }
 
-void link__auth_generate_guid(char out[33])
+void __auth_generate_guid(char out[33])
 {
-	static const char hex[] = "0123456789abcdef";
 	uint8_t raw[16];
 	size_t i;
 
@@ -69,8 +58,8 @@ void link__auth_generate_guid(char out[33])
 	}
 
 	for (i = 0; i < sizeof(raw); i++) {
-		out[i * 2]     = hex[raw[i] >> 4];
-		out[i * 2 + 1] = hex[raw[i] & 0xf];
+		out[i * 2]     = hex_digits[raw[i] >> 4];
+		out[i * 2 + 1] = hex_digits[raw[i] & 0xf];
 	}
 	out[32] = '\0';
 }
@@ -178,7 +167,7 @@ static size_t take_line(link_connection_t *conn, char *out, size_t outsz)
 	return 0;
 }
 
-int link__auth_process(link_connection_t *conn)
+int __auth_process(link_connection_t *conn)
 {
 	uint8_t buf[256];
 	ssize_t n;
@@ -234,5 +223,78 @@ int link__auth_process(link_connection_t *conn)
 		}
 	}
 
+	return 0;
+}
+
+/* ---- client-side SASL composer ---- */
+
+/* Read a single CR+LF (or just LF) terminated line from fd into buf.
+ * Returns the line length (without the terminator), or -1 on EOF or
+ * buffer overflow.  Blocks until a complete line arrives.
+ *
+ * Used only by __auth_client; the server-side parser does its
+ * own line extraction out of conn->linebuf. */
+static ssize_t client_read_line(int fd, char *buf, size_t bufsz)
+{
+	size_t off = 0;
+
+	while (off + 1 < bufsz) {
+		ssize_t n = read(fd, buf + off, 1);
+
+		if (n == 0)
+			return -1;
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			return -1;
+		}
+		if (buf[off] == '\n') {
+			buf[off] = '\0';
+			if (off > 0 && buf[off - 1] == '\r')
+				buf[--off] = '\0';
+			return (ssize_t)off;
+		}
+		off++;
+	}
+	return -1;
+}
+
+int __auth_client(int fd, uid_t uid)
+{
+	
+	char uidstr[16];
+	char hexuid[32];
+	char line[64];
+	char reply_line[256];
+	size_t i, n;
+	int    rc;
+
+	if (write_all(fd, "\0", 1) < 0)
+		return -1;
+
+	n = (size_t)snprintf(uidstr, sizeof(uidstr), "%u", (unsigned)uid);
+	if (n * 2 >= sizeof(hexuid))
+		return -1;
+	for (i = 0; i < n; i++) {
+		unsigned c = (unsigned char)uidstr[i];
+
+		hexuid[i * 2]     = hex_digits[c >> 4];
+		hexuid[i * 2 + 1] = hex_digits[c & 0xf];
+	}
+	hexuid[n * 2] = '\0';
+
+	rc = snprintf(line, sizeof(line), "AUTH EXTERNAL %s\r\n", hexuid);
+	if (rc < 0 || (size_t)rc >= sizeof(line))
+		return -1;
+	if (write_all(fd, line, (size_t)rc) < 0)
+		return -1;
+
+	if (client_read_line(fd, reply_line, sizeof(reply_line)) < 0)
+		return -1;
+	if (strncmp(reply_line, "OK ", 3) != 0)
+		return -1;
+
+	if (write_all(fd, "BEGIN\r\n", 7) < 0)
+		return -1;
 	return 0;
 }

@@ -3,13 +3,13 @@
  * Copyright (c) 2026  Joachim Wiberg <troglobit@gmail.com>
  * SPDX-License-Identifier: MIT
  */
-#ifndef LIBINK_INK_INTERNAL_H_
-#define LIBINK_INK_INTERNAL_H_
+#ifndef LIBINK_INTERNAL_H_
+#define LIBINK_INTERNAL_H_
 
 #include <stdint.h>
 #include <sys/queue.h>
 
-#include "ink.h"
+#include "link.h"
 #include "marshal.h"
 #include "proto.h"
 
@@ -109,28 +109,33 @@ struct link_connection {
 	struct link_server  *server;	/* back-pointer for dispatch */
 };
 
+/* io.c — shared EINTR-resilient I/O loops. */
+int  __io_write_all(int fd, const void *buf, size_t len);
+int  __io_read_full(int fd, void *buf,       size_t len);
+
 /* auth.c */
-int  link__auth_process(link_connection_t *conn);
-void link__auth_generate_guid(char out[33]);
+int  __auth_process(link_connection_t *conn);
+void __auth_generate_guid(char out[33]);
+int  __auth_client(int fd, uid_t uid);
 
 /* dispatch.c */
-int  link__dispatch_message(link_connection_t *conn, const struct link_msg *m);
-int  link__send_error(link_connection_t *conn, const struct link_msg *req,
+int  __dispatch_message(link_connection_t *conn, const struct link_msg *m);
+int  __send_error(link_connection_t *conn, const struct link_msg *req,
 		     const char *error_name, const char *text);
-int  link__send_method_return(link_connection_t *conn, const struct link_msg *req,
+int  __send_method_return(link_connection_t *conn, const struct link_msg *req,
 			     const char *out_sig,
 			     const uint8_t *body, size_t body_len);
 
 /* builtin.c */
-int  link__handle_builtin(link_connection_t *conn, const struct link_msg *m);
+int  __handle_builtin(link_connection_t *conn, const struct link_msg *m);
 
 /* match.c */
-struct link_match *link__match_parse  (const char *rule);
-void              link__match_free   (struct link_match *m);
-int               link__match_matches(const struct link_match *m,
+struct link_match *__match_parse  (const char *rule);
+void              __match_free   (struct link_match *m);
+int               __match_matches(const struct link_match *m,
 				     const char *path, const char *iface,
 				     const char *member);
-int               link__match_add    (link_connection_t *conn, const char *rule);
-int               link__match_remove (link_connection_t *conn, const char *rule);
+int               __match_add    (link_connection_t *conn, const char *rule);
+int               __match_remove (link_connection_t *conn, const char *rule);
 
-#endif /* LIBINK_INK_INTERNAL_H_ */
+#endif /* LIBINK_INTERNAL_H_ */

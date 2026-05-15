@@ -38,7 +38,7 @@
 
 #include <ftw.h>
 
-#include "ink.h"
+#include "link.h"
 #include "path.h"
 
 #include "finit.h"

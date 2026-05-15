@@ -9,7 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "ink-internal.h"
+#include "internal.h"
 
 int link_connection_get_fd(const link_connection_t *conn)
 {
@@ -29,7 +29,7 @@ void link_connection_close(link_connection_t *conn)
 		return;
 
 	for (i = 0; i < conn->matches_count; i++)
-		link__match_free(conn->matches[i]);
+		__match_free(conn->matches[i]);
 
 	if (conn->fd >= 0)
 		close(conn->fd);
@@ -46,13 +46,13 @@ static int process_binary(link_connection_t *conn)
 		struct link_msg msg;
 		ssize_t        consumed;
 
-		consumed = link__msg_parse(conn->rxbuf, conn->rxlen, &msg);
+		consumed = __msg_parse(conn->rxbuf, conn->rxlen, &msg);
 		if (consumed == 0)
 			break;	/* incomplete; wait for more bytes */
 		if (consumed < 0)
 			return -1;
 
-		if (link__dispatch_message(conn, &msg) < 0)
+		if (__dispatch_message(conn, &msg) < 0)
 			return -1;
 
 		memmove(conn->rxbuf, conn->rxbuf + consumed,
@@ -73,7 +73,7 @@ int link_connection_process(link_connection_t *conn)
 		return -1;
 
 	if (conn->auth != LINK_AUTH_DONE) {
-		if (link__auth_process(conn) < 0)
+		if (__auth_process(conn) < 0)
 			return -1;
 
 		/* Still in SASL phase — wait for more bytes. */

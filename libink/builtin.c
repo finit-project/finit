@@ -15,7 +15,7 @@
 #include <string.h>
 #include <sys/types.h>
 
-#include "ink-internal.h"
+#include "internal.h"
 
 /* ---------- helpers ---------- */
 
@@ -34,14 +34,14 @@ static int send_string_reply(link_connection_t *conn, const struct link_msg *req
 	struct link_writer w;
 	ssize_t           blen;
 
-	link__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
-	link__w_string(&w, s);
-	blen = link__w_finish(&w);
+	__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
+	__w_string(&w, s);
+	blen = __w_finish(&w);
 	if (blen < 0) {
 		errno = EMSGSIZE;
 		return -1;
 	}
-	return link__send_method_return(conn, req, "s", conn->txbuf, (size_t)blen);
+	return __send_method_return(conn, req, "s", conn->txbuf, (size_t)blen);
 }
 
 /* ---------- Hello ---------- */
@@ -61,7 +61,7 @@ static int handle_hello(link_connection_t *conn, const struct link_msg *m)
 
 static int handle_ping(link_connection_t *conn, const struct link_msg *m)
 {
-	return link__send_method_return(conn, m, NULL, NULL, 0);
+	return __send_method_return(conn, m, NULL, NULL, 0);
 }
 
 static int handle_get_machine_id(link_connection_t *conn, const struct link_msg *m)
@@ -74,7 +74,7 @@ static int handle_get_machine_id(link_connection_t *conn, const struct link_msg 
 	static char machine_id[33];
 
 	if (!machine_id[0])
-		link__auth_generate_guid(machine_id);
+		__auth_generate_guid(machine_id);
 	return send_string_reply(conn, m, machine_id);
 }
 
@@ -224,7 +224,7 @@ static int handle_introspect(link_connection_t *conn, const struct link_msg *m)
 	xprintf(&x, "</node>\n");
 
 	if (x.err)
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.Failed",
 			"Introspection XML overflow");
 
@@ -239,26 +239,26 @@ static int handle_add_match(link_connection_t *conn, const struct link_msg *m)
 	struct link_reader r;
 
 	if (!m->signature || strcmp(m->signature, "s") != 0)
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"AddMatch takes a single string");
 
-	link__r_init(&r, m->body, m->body_avail);
-	if (link__r_string(&r, &rule) < 0)
-		return link__send_error(conn, m,
+	__r_init(&r, m->body, m->body_avail);
+	if (__r_string(&r, &rule) < 0)
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Malformed argument");
 
-	if (link__match_add(conn, rule) < 0) {
+	if (__match_add(conn, rule) < 0) {
 		if (errno == ENOSPC)
-			return link__send_error(conn, m,
+			return __send_error(conn, m,
 				"org.freedesktop.DBus.Error.LimitsExceeded",
 				"Too many active match rules");
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.MatchRuleInvalid",
 			"Unrecognised key or malformed rule");
 	}
-	return link__send_method_return(conn, m, NULL, NULL, 0);
+	return __send_method_return(conn, m, NULL, NULL, 0);
 }
 
 static int handle_remove_match(link_connection_t *conn, const struct link_msg *m)
@@ -267,27 +267,27 @@ static int handle_remove_match(link_connection_t *conn, const struct link_msg *m
 	struct link_reader r;
 
 	if (!m->signature || strcmp(m->signature, "s") != 0)
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"RemoveMatch takes a single string");
 
-	link__r_init(&r, m->body, m->body_avail);
-	if (link__r_string(&r, &rule) < 0)
-		return link__send_error(conn, m,
+	__r_init(&r, m->body, m->body_avail);
+	if (__r_string(&r, &rule) < 0)
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Malformed argument");
 
-	if (link__match_remove(conn, rule) < 0)
-		return link__send_error(conn, m,
+	if (__match_remove(conn, rule) < 0)
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.MatchRuleNotFound",
 			"No such match rule on this connection");
 
-	return link__send_method_return(conn, m, NULL, NULL, 0);
+	return __send_method_return(conn, m, NULL, NULL, 0);
 }
 
 /* ---------- entry point ---------- */
 
-int link__handle_builtin(link_connection_t *conn, const struct link_msg *m)
+int __handle_builtin(link_connection_t *conn, const struct link_msg *m)
 {
 	if (member_is(m, "org.freedesktop.DBus", "Hello") &&
 	    m->path && strcmp(m->path, "/org/freedesktop/DBus") == 0)

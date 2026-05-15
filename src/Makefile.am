@@ -109,7 +109,8 @@ initctl_CFLAGS     = -W -Wall -Wextra -Wno-unused-parameter -std=gnu99
 initctl_CFLAGS    += $(lite_CFLAGS) $(uev_CFLAGS)
 initctl_LDADD      = $(lite_LIBS) $(uev_LIBS)
 if DBUS
-initctl_SOURCES   += dbus-client.c dbus-client.h
+initctl_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/libink
+initctl_LDADD     += $(top_builddir)/libink/libink.la
 endif
 
 INIT_LNKS          = init telinit

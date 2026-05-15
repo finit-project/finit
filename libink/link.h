@@ -20,8 +20,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#ifndef LIBINK_INK_H_
-#define LIBINK_INK_H_
+#ifndef LIBINK_LINK_H_
+#define LIBINK_LINK_H_
 
 #include <stddef.h>
 #include <stdint.h>
@@ -34,6 +34,7 @@ extern "C" {
 typedef struct link_server     link_server_t;
 typedef struct link_connection link_connection_t;
 typedef struct link_call       link_call_t;
+typedef struct link_client     link_client_t;
 
 /* Writer is exposed so callers can stack-allocate one for marshalling
  * signal/reply bodies.  Treat the fields as opaque; use link_writer_init
@@ -147,6 +148,36 @@ int link_connection_emit_signal(link_connection_t *conn,
 			       const char *signature,
 			       const uint8_t *body, size_t body_len);
 
+/* ----------  client (outgoing method calls)  ----------
+ *
+ * Connect, authenticate as the current effective uid, send BEGIN.
+ * Returns NULL on any failure (caller can fall back to another
+ * transport if it has one). */
+link_client_t *link_client_open(const char *path);
+void           link_client_close(link_client_t *c);
+
+/* Status codes returned by link_client_call. */
+#define LINK_CALL_OK     0   /* method-return received */
+#define LINK_CALL_ERROR  1   /* server replied with an error */
+#define LINK_CALL_FAIL  (-1) /* transport, parse, or invalid-arg failure */
+
+/* Send a METHOD_CALL and read the reply synchronously.
+ *
+ * `signature` and `body`/`body_len` describe the outgoing body --
+ * marshal it yourself with link_writer_init + the link_w_* helpers
+ * + link_writer_finish.  Pass signature=NULL and body=NULL for
+ * methods that take no arguments.
+ *
+ * On LINK_CALL_ERROR the peer's org.* error name is copied into
+ * err_buf (truncated if needed; pass NULL if you don't care). */
+int link_client_call(link_client_t *c,
+		     const char *obj_path,
+		     const char *interface,
+		     const char *member,
+		     const char *signature,
+		     const uint8_t *body, size_t body_len,
+		     char *err_buf, size_t err_buf_sz);
+
 /* ----------  standalone writer  ----------
  *
  * For marshalling bodies outside a method-call handler (signals,
@@ -172,4 +203,4 @@ void link_w_struct_end  (link_writer_t *w);
 }
 #endif
 
-#endif /* LIBINK_INK_H_ */
+#endif /* LIBINK_LINK_H_ */

@@ -1,4 +1,4 @@
-# libink — D-Bus server library born inside Finit
+# libink — brokerless D-Bus library (server + client), born inside Finit
 lib_LTLIBRARIES          = libink.la
 libink_la_SOURCES        = server.c auth.c connection.c \
                            proto.c proto.h               \
@@ -6,10 +6,9 @@ libink_la_SOURCES        = server.c auth.c connection.c \
                            dispatch.c builtin.c          \
                            match.c                       \
                            path.c                        \
-                           ink-internal.h
+                           client.c io.c                 \
+                           internal.h
 
-# Public header: ink.h installed by `ink_HEADERS` below; path.h
-# is also exported, so consumers get ink_path_encode.
 libink_la_LDFLAGS        = -version-info 0:0:0
 libink_la_CPPFLAGS       = -D_GNU_SOURCE -D_DEFAULT_SOURCE -D_BSD_SOURCE
 libink_la_CFLAGS         = -W -Wall -Wextra -Wno-unused-parameter -std=gnu99
@@ -18,6 +17,6 @@ libink_la_CFLAGS         = -W -Wall -Wextra -Wno-unused-parameter -std=gnu99
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = libink.pc
 
-# Public header installs to $(includedir)/ink/ink.h
+# Public headers install to $(includedir)/ink/
 inkdir = $(includedir)/ink
-ink_HEADERS = ink.h path.h
+ink_HEADERS = link.h path.h

@@ -12,7 +12,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "ink-internal.h"
+#include "internal.h"
 
 static void close_save_errno(int fd)
 {
@@ -155,7 +155,7 @@ int link_server_accept(link_server_t *srv, link_connection_t **out)
 	else
 		conn->peer_uid = (uid_t)-1;
 
-	link__auth_generate_guid(conn->guid);
+	__auth_generate_guid(conn->guid);
 
 	*out = conn;
 	return 0;

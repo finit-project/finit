@@ -75,7 +75,7 @@ static const char *parse_signature(const uint8_t *buf, size_t avail, size_t *con
 	return (const char *)(buf + 1);
 }
 
-ssize_t link__msg_parse(const uint8_t *buf, size_t len, struct link_msg *out)
+ssize_t __msg_parse(const uint8_t *buf, size_t len, struct link_msg *out)
 {
 	uint32_t fields_len, total_hdr, body_off, total;
 	const uint8_t *fp, *fend;
@@ -271,7 +271,7 @@ static ssize_t finalize_header(uint8_t *buf, size_t cap,
 	return (ssize_t)hdr_end;
 }
 
-ssize_t link__msg_build_return(uint8_t *buf, size_t cap,
+ssize_t __msg_build_return(uint8_t *buf, size_t cap,
 			      uint32_t serial, uint32_t reply_serial,
 			      const char *destination,
 			      const char *signature, uint32_t body_len)
@@ -295,7 +295,7 @@ ssize_t link__msg_build_return(uint8_t *buf, size_t cap,
 			       body_len, serial, off);
 }
 
-ssize_t link__msg_build_error(uint8_t *buf, size_t cap,
+ssize_t __msg_build_error(uint8_t *buf, size_t cap,
 			     uint32_t serial, uint32_t reply_serial,
 			     const char *destination,
 			     const char *error_name,
@@ -322,7 +322,7 @@ ssize_t link__msg_build_error(uint8_t *buf, size_t cap,
 			       body_len, serial, off);
 }
 
-ssize_t link__msg_build_signal(uint8_t *buf, size_t cap,
+ssize_t __msg_build_signal(uint8_t *buf, size_t cap,
 			      uint32_t serial,
 			      const char *path,
 			      const char *interface,
@@ -349,7 +349,37 @@ ssize_t link__msg_build_signal(uint8_t *buf, size_t cap,
 			       body_len, serial, off);
 }
 
-size_t link__msg_header_size(const struct link_msg *m)
+ssize_t __msg_build_method_call(uint8_t *buf, size_t cap,
+				    uint32_t serial,
+				    const char *path,
+				    const char *interface,
+				    const char *member,
+				    const char *signature,
+				    uint32_t body_len)
+{
+	size_t off = HDR_FIXED_SIZE;
+
+	if (cap < HDR_FIXED_SIZE || !path || !member)
+		return -1;
+
+	if (put_field_string(buf, cap, &off, LINK_HDR_PATH, 'o', path) < 0)
+		return -1;
+	if (interface &&
+	    put_field_string(buf, cap, &off, LINK_HDR_INTERFACE, 's', interface) < 0)
+		return -1;
+	if (put_field_string(buf, cap, &off, LINK_HDR_MEMBER, 's', member) < 0)
+		return -1;
+	if (signature && *signature &&
+	    put_field_string(buf, cap, &off, LINK_HDR_SIGNATURE, 'g', signature) < 0)
+		return -1;
+
+	return finalize_header(buf, cap, LINK_MSG_METHOD_CALL,
+			       /* flags=0: we expect a reply */
+			       0,
+			       body_len, serial, off);
+}
+
+size_t __msg_header_size(const struct link_msg *m)
 {
 	(void)m;
 	/* Generous upper bound used by callers to size send buffers. */

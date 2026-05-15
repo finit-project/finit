@@ -10,7 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "ink-internal.h"
+#include "internal.h"
 
 /* ----------  object/vtable registration  ---------- */
 
@@ -135,27 +135,15 @@ static const link_method_t *resolve(struct link_object *o,
 
 /* ----------  send helpers  ---------- */
 
-/* TODO: send_all is blocking.  A slow or paused peer that lets its
- * socket buffer fill will stall PID 1 here.  The 64-peer cap +
- * kernel buffer (~256 KB) hide the symptom for now; for production
- * hardening, make the fd non-blocking and drop the peer on EAGAIN. */
-static int send_all(int fd, const uint8_t *buf, size_t len)
-{
-	while (len > 0) {
-		ssize_t n = write(fd, buf, len);
+/*
+ * Peer fds are non-blocking, so send_all may fail mid-frame (e.g.
+ * EAGAIN from a peer that stopped draining its socket).  Any failure
+ * poisons the peer's stream: never retry on the same connection,
+ * drop the peer.
+ */
+#define send_all(fd, buf, len)  __io_write_all((fd), (buf), (len))
 
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			return -1;
-		}
-		buf += n;
-		len -= (size_t)n;
-	}
-	return 0;
-}
-
-int link__send_method_return(link_connection_t *conn, const struct link_msg *req,
+int __send_method_return(link_connection_t *conn, const struct link_msg *req,
 			    const char *out_sig,
 			    const uint8_t *body, size_t body_len)
 {
@@ -163,7 +151,7 @@ int link__send_method_return(link_connection_t *conn, const struct link_msg *req
 	ssize_t hlen;
 	uint32_t serial = ++conn->next_serial;
 
-	hlen = link__msg_build_return(hdr, sizeof(hdr), serial,
+	hlen = __msg_build_return(hdr, sizeof(hdr), serial,
 				     req->serial,
 				     req->sender,
 				     out_sig, (uint32_t)body_len);
@@ -200,7 +188,7 @@ int link_connection_emit_signal(link_connection_t *conn,
 		return 0;	/* peer hasn't finished the SASL phase */
 
 	for (i = 0; i < conn->matches_count; i++) {
-		if (link__match_matches(conn->matches[i], path,
+		if (__match_matches(conn->matches[i], path,
 				       interface, member)) {
 			matched = 1;
 			break;
@@ -210,7 +198,7 @@ int link_connection_emit_signal(link_connection_t *conn,
 		return 0;	/* peer didn't subscribe — nothing to do */
 
 	serial = ++conn->next_serial;
-	hlen = link__msg_build_signal(hdr, sizeof(hdr), serial,
+	hlen = __msg_build_signal(hdr, sizeof(hdr), serial,
 				     path, interface, member,
 				     signature, (uint32_t)body_len);
 	if (hlen < 0) {
@@ -225,7 +213,7 @@ int link_connection_emit_signal(link_connection_t *conn,
 	return 0;
 }
 
-int link__send_error(link_connection_t *conn, const struct link_msg *req,
+int __send_error(link_connection_t *conn, const struct link_msg *req,
 		    const char *error_name, const char *text)
 {
 	uint8_t  hdr[512];
@@ -239,9 +227,9 @@ int link__send_error(link_connection_t *conn, const struct link_msg *req,
 		struct link_writer w;
 		ssize_t n;
 
-		link__w_init(&w, body, sizeof(body));
-		link__w_string(&w, text);
-		n = link__w_finish(&w);
+		__w_init(&w, body, sizeof(body));
+		__w_string(&w, text);
+		n = __w_finish(&w);
 		if (n < 0) {
 			errno = EMSGSIZE;
 			return -1;
@@ -250,7 +238,7 @@ int link__send_error(link_connection_t *conn, const struct link_msg *req,
 		sig  = "s";
 	}
 
-	hlen = link__msg_build_error(hdr, sizeof(hdr), serial,
+	hlen = __msg_build_error(hdr, sizeof(hdr), serial,
 				    req->serial, req->sender,
 				    error_name, sig, (uint32_t)blen);
 	if (hlen < 0) {
@@ -277,7 +265,7 @@ link_writer_t *link_call_reply(link_call_t *call)
 	if (!call || call->reply_consumed || call->error_sent)
 		return NULL;
 	call->reply_consumed = 1;
-	link__w_init(&call->reply_writer,
+	__w_init(&call->reply_writer,
 		    call->conn->txbuf, sizeof(call->conn->txbuf));
 	return &call->reply_writer;
 }
@@ -289,35 +277,35 @@ int link_call_reply_error(link_call_t *call, const char *name, const char *messa
 		return -1;
 	}
 	call->error_sent = 1;
-	return link__send_error(call->conn, &call->incoming, name, message);
+	return __send_error(call->conn, &call->incoming, name, message);
 }
 
 /* ----------  public reader wrappers  ---------- */
 
-int link_call_read_byte  (link_call_t *c, uint8_t *o)        { return link__r_byte  (&c->read_cursor, o); }
-int link_call_read_bool  (link_call_t *c, int *o)            { return link__r_bool  (&c->read_cursor, o); }
-int link_call_read_u32   (link_call_t *c, uint32_t *o)       { return link__r_u32   (&c->read_cursor, o); }
-int link_call_read_string(link_call_t *c, const char **o)    { return link__r_string(&c->read_cursor, o); }
-int link_call_read_path  (link_call_t *c, const char **o)    { return link__r_path  (&c->read_cursor, o); }
+int link_call_read_byte  (link_call_t *c, uint8_t *o)        { return __r_byte  (&c->read_cursor, o); }
+int link_call_read_bool  (link_call_t *c, int *o)            { return __r_bool  (&c->read_cursor, o); }
+int link_call_read_u32   (link_call_t *c, uint32_t *o)       { return __r_u32   (&c->read_cursor, o); }
+int link_call_read_string(link_call_t *c, const char **o)    { return __r_string(&c->read_cursor, o); }
+int link_call_read_path  (link_call_t *c, const char **o)    { return __r_path  (&c->read_cursor, o); }
 
 /* ----------  public writer wrappers  ---------- */
 
-void    link_writer_init  (link_writer_t *w, uint8_t *buf, size_t cap) { link__w_init(w, buf, cap); }
-ssize_t link_writer_finish(link_writer_t *w)                           { return link__w_finish(w); }
+void    link_writer_init  (link_writer_t *w, uint8_t *buf, size_t cap) { __w_init(w, buf, cap); }
+ssize_t link_writer_finish(link_writer_t *w)                           { return __w_finish(w); }
 
-void link_w_byte    (link_writer_t *w, uint8_t v)        { link__w_byte(w, v); }
-void link_w_bool    (link_writer_t *w, int v)            { link__w_bool(w, v); }
-void link_w_u32     (link_writer_t *w, uint32_t v)       { link__w_u32(w, v);  }
-void link_w_string  (link_writer_t *w, const char *s)    { link__w_string(w, s); }
-void link_w_path    (link_writer_t *w, const char *s)    { link__w_path(w, s);   }
-void link_w_array_begin (link_writer_t *w, char ec)      { link__w_array_begin(w, ec); }
-void link_w_array_end   (link_writer_t *w)               { link__w_array_end(w);       }
-void link_w_struct_begin(link_writer_t *w)               { link__w_struct_begin(w); }
-void link_w_struct_end  (link_writer_t *w)               { link__w_struct_end(w);   }
+void link_w_byte    (link_writer_t *w, uint8_t v)        { __w_byte(w, v); }
+void link_w_bool    (link_writer_t *w, int v)            { __w_bool(w, v); }
+void link_w_u32     (link_writer_t *w, uint32_t v)       { __w_u32(w, v);  }
+void link_w_string  (link_writer_t *w, const char *s)    { __w_string(w, s); }
+void link_w_path    (link_writer_t *w, const char *s)    { __w_path(w, s);   }
+void link_w_array_begin (link_writer_t *w, char ec)      { __w_array_begin(w, ec); }
+void link_w_array_end   (link_writer_t *w)               { __w_array_end(w);       }
+void link_w_struct_begin(link_writer_t *w)               { __w_struct_begin(w); }
+void link_w_struct_end  (link_writer_t *w)               { __w_struct_end(w);   }
 
 /* ----------  dispatch entry point  ---------- */
 
-int link__dispatch_message(link_connection_t *conn, const struct link_msg *m)
+int __dispatch_message(link_connection_t *conn, const struct link_msg *m)
 {
 	struct link_object       *o;
 	struct link_vtable_entry *e = NULL;
@@ -333,31 +321,31 @@ int link__dispatch_message(link_connection_t *conn, const struct link_msg *m)
 	}
 
 	if (!m->path || !m->member) {
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Method call without path or member");
 	}
 
-	/* Built-in DBus interfaces (Hello, Ping, Introspect) are handled
-	 * here before object-tree lookup, which means they also run
-	 * before the LINK_METHOD_PRIVILEGED authz gate further down.  The
-	 * current set is read-only; do NOT introduce a state-changing
-	 * built-in without first adding equivalent authorisation inside
-	 * link__handle_builtin. */
-	rc = link__handle_builtin(conn, m);
+	/* Built-in DBus interfaces (Hello, Ping, Introspect, Properties)
+	 * are handled here before object-tree lookup, which means they
+	 * also run before the LINK_METHOD_PRIVILEGED authz gate further
+	 * down.  The current set is read-only; do NOT introduce a
+	 * state-changing built-in without first adding equivalent
+	 * authorisation inside __handle_builtin. */
+	rc = __handle_builtin(conn, m);
 	if (rc >= 0)
 		return rc;	/* 0 = handled OK, 1 = built-in but failed; <0 = not a built-in */
 
 	o = find_object(conn->server, m->path);
 	if (!o) {
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.UnknownObject",
 			"No such object");
 	}
 
 	meth = resolve(o, m->interface, m->member, &e);
 	if (!meth) {
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.UnknownMethod",
 			"No such method on this object");
 	}
@@ -368,7 +356,7 @@ int link__dispatch_message(link_connection_t *conn, const struct link_msg *m)
 		const char *want = meth->in_sig ? meth->in_sig : "";
 
 		if (strcmp(got, want) != 0)
-			return link__send_error(conn, m,
+			return __send_error(conn, m,
 				"org.freedesktop.DBus.Error.InvalidArgs",
 				"Argument signature mismatch");
 	}
@@ -378,7 +366,7 @@ int link__dispatch_message(link_connection_t *conn, const struct link_msg *m)
 	 * and verified against the AUTH EXTERNAL claim, so we can trust
 	 * conn->peer_uid here. */
 	if ((meth->flags & LINK_METHOD_PRIVILEGED) && conn->peer_uid != 0) {
-		return link__send_error(conn, m,
+		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.AccessDenied",
 			"Method requires root privileges");
 	}
@@ -386,12 +374,12 @@ int link__dispatch_message(link_connection_t *conn, const struct link_msg *m)
 	memset(&call, 0, sizeof(call));
 	call.conn     = conn;
 	call.incoming = *m;
-	link__r_init(&call.read_cursor, m->body, m->body_avail);
+	__r_init(&call.read_cursor, m->body, m->body_avail);
 
 	rc = meth->handler(&call, e->userdata);
 	if (rc < 0 && !call.reply_consumed && !call.error_sent) {
 		/* Handler returned an error without sending one. */
-		link__send_error(conn, m,
+		__send_error(conn, m,
 				"org.freedesktop.DBus.Error.Failed",
 				"Handler failed");
 		return 0;
@@ -400,17 +388,17 @@ int link__dispatch_message(link_connection_t *conn, const struct link_msg *m)
 	if (!call.reply_consumed && !call.error_sent) {
 		/* Handler returned 0 but never produced a reply; treat as
 		 * empty reply with out_sig "". */
-		link__send_method_return(conn, m, NULL, NULL, 0);
+		__send_method_return(conn, m, NULL, NULL, 0);
 		return 0;
 	}
 
 	if (call.reply_consumed && !call.error_sent) {
-		blen = link__w_finish(&call.reply_writer);
+		blen = __w_finish(&call.reply_writer);
 		if (blen < 0)
-			return link__send_error(conn, m,
+			return __send_error(conn, m,
 				"org.freedesktop.DBus.Error.Failed",
 				"Reply marshalling overflow");
-		return link__send_method_return(conn, m, meth->out_sig,
+		return __send_method_return(conn, m, meth->out_sig,
 					       conn->txbuf, (size_t)blen);
 	}
 

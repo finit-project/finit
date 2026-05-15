@@ -63,35 +63,44 @@ struct link_msg {
  * success returns the total number of bytes consumed (header +
  * padding + body) and fills *out.  Returns 0 if more bytes are
  * needed, -1 on malformed input. */
-ssize_t link__msg_parse(const uint8_t *buf, size_t len, struct link_msg *out);
+ssize_t __msg_parse(const uint8_t *buf, size_t len, struct link_msg *out);
 
 /* Compute the on-wire size of a future message header given the
  * fields we'd populate.  Used to size send buffers. */
-size_t link__msg_header_size(const struct link_msg *m);
+size_t __msg_header_size(const struct link_msg *m);
 
 /* Build a method-return header into `buf` (capacity `cap`).
  * `reply_serial`/`destination` come from the call being replied to.
  * `signature` is the body signature ("" if no args).  `body_len`
  * is the length of the body that will follow the header padding.
  * Returns the number of bytes written, or -1 on overflow. */
-ssize_t link__msg_build_return(uint8_t *buf, size_t cap,
+ssize_t __msg_build_return(uint8_t *buf, size_t cap,
 			      uint32_t serial, uint32_t reply_serial,
 			      const char *destination,
 			      const char *signature, uint32_t body_len);
 
 /* Build an error reply header. */
-ssize_t link__msg_build_error(uint8_t *buf, size_t cap,
+ssize_t __msg_build_error(uint8_t *buf, size_t cap,
 			     uint32_t serial, uint32_t reply_serial,
 			     const char *destination,
 			     const char *error_name,
 			     const char *signature, uint32_t body_len);
 
 /* Build a signal header (no reply expected, no destination). */
-ssize_t link__msg_build_signal(uint8_t *buf, size_t cap,
+ssize_t __msg_build_signal(uint8_t *buf, size_t cap,
 			      uint32_t serial,
 			      const char *path,
 			      const char *interface,
 			      const char *member,
 			      const char *signature, uint32_t body_len);
+
+/* Build a method-call header (client side). */
+ssize_t __msg_build_method_call(uint8_t *buf, size_t cap,
+				    uint32_t serial,
+				    const char *path,
+				    const char *interface,
+				    const char *member,
+				    const char *signature,
+				    uint32_t body_len);
 
 #endif /* LIBINK_PROTO_H_ */
