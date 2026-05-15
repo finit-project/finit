@@ -72,6 +72,11 @@ EXTRA_DIST		+= signal-service.sh
 EXTRA_DIST		+= testserv.sh
 EXTRA_DIST		+= unexpected-restart.sh
 EXTRA_DIST		+= dbus-auth.sh
+EXTRA_DIST		+= dbus-bus.sh
+EXTRA_DIST		+= dbus-manager.sh
+EXTRA_DIST		+= dbus-service.sh
+EXTRA_DIST		+= dbus-cond.sh
+EXTRA_DIST		+= dbus-initctl.sh
 
 AM_TESTS_ENVIRONMENT	 = SYSROOT='$(abs_builddir)/sysroot/';
 AM_TESTS_ENVIRONMENT	+= export SYSROOT;
@@ -129,6 +134,11 @@ endif
 TESTS			+= unexpected-restart.sh
 if DBUS
 TESTS			+= dbus-auth.sh
+TESTS			+= dbus-bus.sh
+TESTS			+= dbus-manager.sh
+TESTS			+= dbus-service.sh
+TESTS			+= dbus-cond.sh
+TESTS			+= dbus-initctl.sh
 endif
 
 check-recursive: setup-chroot
