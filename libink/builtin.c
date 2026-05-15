@@ -104,24 +104,53 @@ static void xprintf(struct xbuf *x, const char *fmt, ...)
 	x->off += (size_t)n;
 }
 
+/*
+ * Advance past one single complete type in a D-Bus signature:
+ * a basic type code, 'a' + element type, or a bracketed group.
+ * Signatures come from our own vtables, so trust them; an
+ * unterminated group just stops at NUL.
+ */
+static const char *sig_next(const char *p)
+{
+	while (*p == 'a')	/* array prefixes, then element type */
+		p++;
+	if (*p == '(' || *p == '{') {
+		char close = *p == '(' ? ')' : '}';
+
+		for (p++; *p && *p != close; p = sig_next(p))
+			;
+	}
+	return *p ? p + 1 : p;	/* NUL: unterminated group, stop here */
+}
+
+static void emit_args(struct xbuf *x, const char *sig, const char *dir)
+{
+	const char *p, *e;
+
+	for (p = sig; p && *p; p = e) {
+		e = sig_next(p);
+		xprintf(x, "      <arg type=\"%.*s\" direction=\"%s\"/>\n",
+			(int)(e - p), p, dir);
+	}
+}
+
 /* Emit a single <method> stanza for one method definition. */
 static void emit_method(struct xbuf *x, const link_method_t *m)
 {
-	const char *p;
-
 	xprintf(x, "    <method name=\"%s\">\n", m->name);
-	for (p = m->in_sig ? m->in_sig : ""; *p; p++)
-		xprintf(x, "      <arg type=\"%c\" direction=\"in\"/>\n", *p);
-	for (p = m->out_sig ? m->out_sig : ""; *p; p++)
-		xprintf(x, "      <arg type=\"%c\" direction=\"out\"/>\n", *p);
+	emit_args(x, m->in_sig, "in");
+	emit_args(x, m->out_sig, "out");
 	xprintf(x, "    </method>\n");
 }
 
-/* Introspection limitation: emit_method prints one <arg> per
- * character of the signature, which is wrong for compound types
- * (an "a(ss)" arg appears as four args).  Good enough for the
- * "s", "u", "as" signatures we expose today; replace with a
- * signature parser when the first compound argument lands. */
+static void emit_property(struct xbuf *x, const link_property_t *p)
+{
+	/* Setters are not implemented, so every property advertises
+	 * access="read" today.  When Properties.Set lands, switch on
+	 * a writable flag. */
+	xprintf(x, "    <property name=\"%s\" type=\"%s\" access=\"read\"/>\n",
+		p->name, p->sig ? p->sig : "s");
+}
 
 static const char STANDARD_INTERFACES_XML[] =
 	"  <interface name=\"org.freedesktop.DBus.Introspectable\">\n"
@@ -133,6 +162,17 @@ static const char STANDARD_INTERFACES_XML[] =
 	"    <method name=\"Ping\"/>\n"
 	"    <method name=\"GetMachineId\">\n"
 	"      <arg name=\"machine_uuid\" type=\"s\" direction=\"out\"/>\n"
+	"    </method>\n"
+	"  </interface>\n"
+	"  <interface name=\"org.freedesktop.DBus.Properties\">\n"
+	"    <method name=\"Get\">\n"
+	"      <arg name=\"interface\" type=\"s\" direction=\"in\"/>\n"
+	"      <arg name=\"property\"  type=\"s\" direction=\"in\"/>\n"
+	"      <arg name=\"value\"     type=\"v\" direction=\"out\"/>\n"
+	"    </method>\n"
+	"    <method name=\"GetAll\">\n"
+	"      <arg name=\"interface\" type=\"s\" direction=\"in\"/>\n"
+	"      <arg name=\"props\"     type=\"a{sv}\" direction=\"out\"/>\n"
 	"    </method>\n"
 	"  </interface>\n";
 
@@ -197,11 +237,16 @@ static int handle_introspect(link_connection_t *conn, const struct link_msg *m)
 		const link_method_t *meth;
 
 		TAILQ_FOREACH(e, &o->vtables, link) {
+			const link_property_t *prop;
+
 			xprintf(&x, "  <interface name=\"%s\">\n",
 				e->vt->interface);
 			if (e->vt->methods)
 				for (meth = e->vt->methods; meth->name; meth++)
 					emit_method(&x, meth);
+			if (e->vt->properties)
+				for (prop = e->vt->properties; prop->name; prop++)
+					emit_property(&x, prop);
 			xprintf(&x, "  </interface>\n");
 		}
 	}
@@ -229,6 +274,129 @@ static int handle_introspect(link_connection_t *conn, const struct link_msg *m)
 			"Introspection XML overflow");
 
 	return send_string_reply(conn, m, xml);
+}
+
+/* ---------- Properties.Get / GetAll ---------- */
+
+/* Find the (object, vtable-entry) pair matching `path` and `interface`.
+ * Returns NULL if the path is unknown or the interface isn't exposed
+ * on it. */
+static struct link_vtable_entry *
+find_vtable(link_connection_t *conn, const char *path, const char *interface)
+{
+	struct link_object *o;
+
+	if (!path || !interface)
+		return NULL;
+	TAILQ_FOREACH(o, &conn->server->objects, link) {
+		struct link_vtable_entry *e;
+
+		if (strcmp(o->path, path) != 0)
+			continue;
+		TAILQ_FOREACH(e, &o->vtables, link) {
+			if (strcmp(e->vt->interface, interface) == 0)
+				return e;
+		}
+	}
+	return NULL;
+}
+
+static int handle_properties_get(link_connection_t *conn, const struct link_msg *m)
+{
+	const char *iface, *prop_name;
+	struct link_reader r;
+	struct link_writer w;
+	struct link_vtable_entry *e;
+	const link_property_t   *p;
+	ssize_t blen;
+
+	if (!m->signature || strcmp(m->signature, "ss") != 0)
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"Properties.Get takes (interface, property)");
+
+	__r_init(&r, m->body, m->body_avail);
+	if (__r_string(&r, &iface) < 0 || __r_string(&r, &prop_name) < 0)
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"Malformed argument");
+
+	e = find_vtable(conn, m->path, iface);
+	if (!e || !e->vt->properties)
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.UnknownInterface",
+			"No such interface on this object");
+
+	for (p = e->vt->properties; p->name; p++) {
+		if (strcmp(p->name, prop_name) != 0)
+			continue;
+		if (!p->getter)
+			break;
+		__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
+		if (p->getter(&w, e->userdata) != 0 || (blen = __w_finish(&w)) < 0)
+			return __send_error(conn, m,
+				"org.freedesktop.DBus.Error.Failed",
+				"Property getter failed");
+		return __send_method_return(conn, m, "v",
+					   conn->txbuf, (size_t)blen);
+	}
+
+	return __send_error(conn, m,
+		"org.freedesktop.DBus.Error.UnknownProperty",
+		"No such property on this interface");
+}
+
+static int handle_properties_get_all(link_connection_t *conn, const struct link_msg *m)
+{
+	const char *iface;
+	struct link_reader r;
+	struct link_writer w;
+	struct link_vtable_entry *e;
+	const link_property_t   *p;
+	ssize_t blen;
+
+	if (!m->signature || strcmp(m->signature, "s") != 0)
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"Properties.GetAll takes one string");
+
+	__r_init(&r, m->body, m->body_avail);
+	if (__r_string(&r, &iface) < 0)
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"Malformed argument");
+
+	e = find_vtable(conn, m->path, iface);
+	if (!e)
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.UnknownInterface",
+			"No such interface on this object");
+
+	__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
+	__w_array_begin(&w, '{');
+	if (e->vt->properties) {
+		for (p = e->vt->properties; p->name; p++) {
+			if (!p->getter)
+				continue;
+			__w_struct_begin(&w);
+			__w_string(&w, p->name);
+			if (p->getter(&w, e->userdata) != 0)
+				return __send_error(conn, m,
+					"org.freedesktop.DBus.Error.Failed",
+					"Property getter failed");
+			__w_struct_end(&w);
+		}
+	}
+	__w_array_end(&w);
+
+	blen = __w_finish(&w);
+	if (blen < 0)
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.Failed",
+			"Reply too large");
+
+	return __send_method_return(conn, m, "a{sv}",
+				   conn->txbuf, (size_t)blen);
 }
 
 /* ---------- AddMatch / RemoveMatch ---------- */
@@ -309,6 +477,12 @@ int __handle_builtin(link_connection_t *conn, const struct link_msg *m)
 
 	if (member_is(m, "org.freedesktop.DBus.Introspectable", "Introspect"))
 		return handle_introspect(conn, m);
+
+	if (member_is(m, "org.freedesktop.DBus.Properties", "Get"))
+		return handle_properties_get(conn, m);
+
+	if (member_is(m, "org.freedesktop.DBus.Properties", "GetAll"))
+		return handle_properties_get_all(conn, m);
 
 	return -1;	/* not a built-in */
 }

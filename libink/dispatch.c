@@ -298,6 +298,7 @@ void link_w_bool    (link_writer_t *w, int v)            { __w_bool(w, v); }
 void link_w_u32     (link_writer_t *w, uint32_t v)       { __w_u32(w, v);  }
 void link_w_string  (link_writer_t *w, const char *s)    { __w_string(w, s); }
 void link_w_path    (link_writer_t *w, const char *s)    { __w_path(w, s);   }
+void link_w_variant_string(link_writer_t *w, const char *s) { __w_variant_string(w, s); }
 void link_w_array_begin (link_writer_t *w, char ec)      { __w_array_begin(w, ec); }
 void link_w_array_end   (link_writer_t *w)               { __w_array_end(w);       }
 void link_w_struct_begin(link_writer_t *w)               { __w_struct_begin(w); }
@@ -311,6 +312,8 @@ int  link_r_bool  (link_reader_t *r, int      *o)     { return __r_bool  (r, o);
 int  link_r_u32   (link_reader_t *r, uint32_t *o)     { return __r_u32   (r, o); }
 int  link_r_string(link_reader_t *r, const char **o)  { return __r_string(r, o); }
 int  link_r_path  (link_reader_t *r, const char **o)  { return __r_path  (r, o); }
+int  link_r_variant_string(link_reader_t *r, const char **o) { return __r_variant_string(r, o); }
+int  link_r_align (link_reader_t *r, size_t n)        { return __r_align (r, n); }
 int  link_r_done  (const link_reader_t *r)            { return __r_done  (r);    }
 size_t link_r_pos (const link_reader_t *r)            { return r->off;           }
 

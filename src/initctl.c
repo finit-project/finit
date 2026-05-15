@@ -41,6 +41,10 @@
 #include "service.h"
 #include "cgutil.h"
 #include "utmp-api.h"
+#ifdef HAVE_DBUS
+#include "link.h"
+#include "path.h"
+#endif
 
 /* Used by both do_cond_act and (with HAVE_DBUS) cond_dbus_call. */
 typedef enum { COND_CLR, COND_SET, COND_GET } condop_t;
@@ -196,6 +200,74 @@ static int show_log(char *arg)
 	return do_log(svc, "");
 }
 
+#ifdef HAVE_DBUS
+/* Fetch all org.finit.Manager1 string properties in one Properties.GetAll
+ * round-trip, then pick out a subset.  `wanted` is a NULL-terminated array
+ * of property names; `out` parallel-receives the values (each entry left
+ * untouched if its property wasn't returned).  Returns 0 on transport
+ * success (even if some properties weren't present), -1 on transport or
+ * parse failure. */
+static int dbus_get_manager_props(const char *const *wanted, char **out, size_t out_sz)
+{
+	link_client_t *c;
+	const link_reply_t *r;
+	link_reader_t reader;
+	uint32_t       array_bytes;
+	size_t         end;
+	int            rc;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	rc = link_client_call_v(c, "/org/finit/manager",
+				"org.freedesktop.DBus.Properties", "GetAll",
+				"s", "org.finit.Manager1");
+	if (rc != LINK_CALL_OK) {
+		link_client_close(c);
+		return -1;
+	}
+
+	r = link_client_reply(c);
+	if (!r || !r->body) {
+		link_client_close(c);
+		return -1;
+	}
+
+	link_reader_init(&reader, r->body, r->body_len);
+	if (link_r_u32(&reader, &array_bytes) < 0) {
+		link_client_close(c);
+		return -1;
+	}
+	end = link_r_pos(&reader) + array_bytes;
+	if (end > r->body_len) {
+		link_client_close(c);
+		return -1;
+	}
+
+	while (link_r_pos(&reader) < end) {
+		const char *key  = NULL;
+		const char *val  = NULL;
+		size_t i;
+
+		if (link_r_align(&reader, 8) < 0)                  break;
+		if (link_r_string(&reader, &key) < 0)              break;
+		if (link_r_variant_string(&reader, &val) < 0)      break;
+		if (!key || !val)                                  break;
+
+		for (i = 0; wanted[i]; i++) {
+			if (!strcmp(key, wanted[i])) {
+				strlcpy(out[i], val, out_sz);
+				break;
+			}
+		}
+	}
+
+	link_client_close(c);
+	return 0;
+}
+#endif
+
 static int do_runlevel(char *arg)
 {
 	struct init_request rq = {
@@ -207,6 +279,23 @@ static int do_runlevel(char *arg)
 		int prevlevel = 0;
 		int currlevel;
 		char prev, curr;
+
+#ifdef HAVE_DBUS
+		char curr_buf[16] = { 0 }, prev_buf[16] = { 0 };
+		const char *const wanted[] = { "Runlevel", "PrevRunlevel", NULL };
+		char *out[] = { curr_buf, prev_buf };
+
+		if (dbus_get_manager_props(wanted, out, sizeof(curr_buf)) == 0 &&
+		    curr_buf[0] && prev_buf[0]) {
+			int cl = atoi(curr_buf);
+			int pl = atoi(prev_buf);
+
+			curr = (cl == INIT_LEVEL) ? 'S' : (char)(cl + '0');
+			prev = (pl > 0 && pl <= 9) ? (char)(pl + '0') : 'N';
+			printf("%c %c\n", prev, curr);
+			return 0;
+		}
+#endif
 
 		currlevel = runlevel_get(&prevlevel);
 		switch (currlevel) {
@@ -272,7 +361,6 @@ static int do_startstop(int cmd, char *arg)
 }
 
 #ifdef HAVE_DBUS
-#include "link.h"
 
 /* Try the D-Bus path for a Manager1 method.  Returns:
  *    0  succeeded via D-Bus

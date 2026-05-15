@@ -116,9 +116,22 @@ typedef struct {
 	link_method_fn  handler;
 } link_method_t;
 
+/* A read-only property descriptor.  Set via the Properties.Set side
+ * is not yet implemented; only Get and GetAll are.  The getter writes
+ * the property's value as a D-Bus variant (use link_w_variant_string
+ * for "s"-typed properties) into the provided writer. */
+typedef int (*link_property_getter_fn)(link_writer_t *w, void *userdata);
+
 typedef struct {
-	const char         *interface;          /* e.g. "org.finit.Manager1" */
-	const link_method_t *methods;            /* terminated by {NULL, ...} */
+	const char            *name;      /* property name */
+	const char            *sig;       /* D-Bus signature, e.g. "s" */
+	link_property_getter_fn getter;
+} link_property_t;
+
+typedef struct {
+	const char            *interface;     /* e.g. "org.finit.Manager1" */
+	const link_method_t   *methods;       /* terminated by {NULL, ...}, or NULL */
+	const link_property_t *properties;    /* terminated by {NULL, ...}, or NULL */
 } link_vtable_t;
 
 /* Register one (interface, methods) at `path`.  Calling repeatedly
@@ -264,6 +277,7 @@ void link_w_bool    (link_writer_t *w, int v);
 void link_w_u32     (link_writer_t *w, uint32_t v);
 void link_w_string  (link_writer_t *w, const char *s);  /* "s" */
 void link_w_path    (link_writer_t *w, const char *s);  /* "o" */
+void link_w_variant_string(link_writer_t *w, const char *s); /* "v" containing "s" */
 void link_w_array_begin (link_writer_t *w, char element_sig);
 void link_w_array_end   (link_writer_t *w);
 void link_w_struct_begin(link_writer_t *w);
@@ -280,12 +294,15 @@ int    link_r_bool    (link_reader_t *r, int      *out);
 int    link_r_u32     (link_reader_t *r, uint32_t *out);
 int    link_r_string  (link_reader_t *r, const char **out);  /* "s" */
 int    link_r_path    (link_reader_t *r, const char **out);  /* "o" */
+int    link_r_variant_string(link_reader_t *r, const char **out); /* "v" containing "s" */
+int    link_r_align   (link_reader_t *r, size_t n);  /* skip to next n-byte boundary */
 int    link_r_done    (const link_reader_t *r);
 
 /* Byte offset of the next read inside the original body buffer.  Used
  * to detect end-of-array when walking "a<T>" payloads: read the array
  * byte-length prefix with link_r_u32 first, record (pos+length) as the
- * end, then loop while link_r_pos < end. */
+ * end, then loop while link_r_pos < end.  For "a{T}" (dict-entry
+ * arrays) call link_r_align(r, 8) at the top of each iteration. */
 size_t link_r_pos     (const link_reader_t *r);
 
 #ifdef __cplusplus

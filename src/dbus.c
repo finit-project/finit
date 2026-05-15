@@ -33,7 +33,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/queue.h>
+#include <unistd.h>
 #include <uev/uev.h>
 
 #include <ftw.h>
@@ -351,6 +351,48 @@ static int manager_reboot  (link_call_t *c, void *u) { (void)u; return dbus_shut
 static int manager_poweroff(link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_OFF,    0); }
 static int manager_halt    (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_HALT,   0); }
 
+/* ---------- Manager1 properties ----------
+ *
+ * Read-only string properties exposed via the standard
+ * org.freedesktop.DBus.Properties interface.  Getters write a
+ * variant containing a single string. */
+
+/* Two distinct getters because the property table is static const --
+ * we can't bind &runlevel/&prevlevel through userdata. */
+static int prop_runlevel(link_writer_t *w, void *u)
+{
+	char buf[8];
+
+	(void)u;
+	snprintf(buf, sizeof(buf), "%d", runlevel);
+	link_w_variant_string(w, buf);
+	return 0;
+}
+
+static int prop_prevrunlevel(link_writer_t *w, void *u)
+{
+	char buf[8];
+
+	(void)u;
+	snprintf(buf, sizeof(buf), "%d", prevlevel);
+	link_w_variant_string(w, buf);
+	return 0;
+}
+
+static int prop_version(link_writer_t *w, void *u)
+{
+	(void)u;
+	link_w_variant_string(w, PACKAGE_VERSION);
+	return 0;
+}
+
+static const link_property_t manager_properties[] = {
+	{ .name = "Runlevel",     .sig = "s", .getter = prop_runlevel     },
+	{ .name = "PrevRunlevel", .sig = "s", .getter = prop_prevrunlevel },
+	{ .name = "Version",      .sig = "s", .getter = prop_version      },
+	{ NULL, NULL, NULL }
+};
+
 static const link_method_t manager_methods[] = {
 	{ .name = "ListServices", .in_sig = "",  .out_sig = "as",
 	  .handler = manager_list_services },
@@ -376,8 +418,9 @@ static const link_method_t manager_methods[] = {
 };
 
 static const link_vtable_t manager_vtable = {
-	.interface = "org.finit.Manager1",
-	.methods   = manager_methods,
+	.interface  = "org.finit.Manager1",
+	.methods    = manager_methods,
+	.properties = manager_properties,
 };
 
 /* ---------- org.finit.Service1 (one object per service) ----------
@@ -485,6 +528,38 @@ void dbus_unregister_service(svc_t *svc)
 	(void)link_server_remove_object(server, path);
 }
 
+/* ---------- signal fan-out helper ----------
+ *
+ * Fan out a pre-marshalled signal body to every connected peer,
+ * letting each connection apply its AddMatch filter.  Short-circuits
+ * when no peers are connected so dbus_notify_* callers don't have
+ * to inspect that state themselves. */
+static void dbus_emit_signal(const char *path,
+			     const char *interface,
+			     const char *member,
+			     const char *signature,
+			     const uint8_t *body, size_t body_len)
+{
+	struct peer *p, *tmp;
+
+	if (!server || TAILQ_EMPTY(&peers))
+		return;
+	TAILQ_FOREACH_SAFE(p, &peers, link, tmp) {
+		if (link_connection_emit_signal(p->conn,
+				path, interface, member,
+				signature, body, body_len) < 0) {
+			/* nothing hit the wire, and same for every peer */
+			if (errno == EMSGSIZE || errno == EINVAL)
+				break;
+			logit(LOG_WARNING, "D-Bus peer fd %d write failed: "
+			      "%s, dropping",
+			      link_connection_get_fd(p->conn),
+			      strerror(errno));
+			peer_drop(p);
+		}
+	}
+}
+
 /* ---------- signal emission: ServiceStateChanged ---------- */
 
 /*
@@ -518,36 +593,51 @@ static const char *state_name(svc_state_t s)
 
 void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
 {
-	uint8_t        body[256];
-	link_writer_t   w;
-	struct peer   *p;
-	char           ident[MAX_IDENT_LEN];
-	ssize_t        blen;
-	svc_state_t    o = (svc_state_t)old_state;
-	svc_state_t    n = (svc_state_t)new_state;
+	uint8_t      body[256];
+	link_writer_t w;
+	char         ident[MAX_IDENT_LEN];
+	ssize_t      blen;
 
-	if (!server || !svc)
+	if (!svc)
 		return;
-	if (TAILQ_EMPTY(&peers))
-		return;	/* nobody could possibly be listening */
-
 	svc_ident(svc, ident, sizeof(ident));
 
 	link_writer_init(&w, body, sizeof(body));
 	link_w_string(&w, ident);
-	link_w_string(&w, state_name(o));
-	link_w_string(&w, state_name(n));
+	link_w_string(&w, state_name((svc_state_t)old_state));
+	link_w_string(&w, state_name((svc_state_t)new_state));
 	blen = link_writer_finish(&w);
 	if (blen < 0)
 		return;
 
-	TAILQ_FOREACH(p, &peers, link)
-		(void)link_connection_emit_signal(p->conn,
-				"/org/finit/manager",
-				"org.finit.Manager1",
-				"ServiceStateChanged",
-				"sss",
-				body, (size_t)blen);
+	dbus_emit_signal("/org/finit/manager", "org.finit.Manager1",
+			 "ServiceStateChanged", "sss", body, (size_t)blen);
+}
+
+/* ---------- signal emission: RunlevelChanged ----------
+ *
+ * Fired by sm.c right after the runlevel global flips.  Body is
+ * (old, new) as one-digit strings, matching the format that
+ * Manager1.Runlevel (the property) returns. */
+void dbus_notify_runlevel_change(int old_level, int new_level)
+{
+	uint8_t      body[64];
+	link_writer_t w;
+	char         old_s[8], new_s[8];
+	ssize_t      blen;
+
+	snprintf(old_s, sizeof(old_s), "%d", old_level);
+	snprintf(new_s, sizeof(new_s), "%d", new_level);
+
+	link_writer_init(&w, body, sizeof(body));
+	link_w_string(&w, old_s);
+	link_w_string(&w, new_s);
+	blen = link_writer_finish(&w);
+	if (blen < 0)
+		return;
+
+	dbus_emit_signal("/org/finit/manager", "org.finit.Manager1",
+			 "RunlevelChanged", "ss", body, (size_t)blen);
 }
 
 /* ---------- org.finit.Cond1 ---------- */
@@ -766,14 +856,11 @@ static const link_vtable_t cond_vtable = {
 
 void dbus_notify_condition_change(const char *name, const char *state)
 {
-	uint8_t        body[256];
-	link_writer_t   w;
-	struct peer   *p;
-	ssize_t        blen;
+	uint8_t      body[256];
+	link_writer_t w;
+	ssize_t      blen;
 
-	if (!server || !name || !state)
-		return;
-	if (TAILQ_EMPTY(&peers))
+	if (!name || !state)
 		return;
 
 	link_writer_init(&w, body, sizeof(body));
@@ -783,13 +870,8 @@ void dbus_notify_condition_change(const char *name, const char *state)
 	if (blen < 0)
 		return;
 
-	TAILQ_FOREACH(p, &peers, link)
-		(void)link_connection_emit_signal(p->conn,
-				COND_PATH_OBJECT,
-				COND_INTERFACE,
-				"ConditionChanged",
-				"ss",
-				body, (size_t)blen);
+	dbus_emit_signal(COND_PATH_OBJECT, COND_INTERFACE,
+			 "ConditionChanged", "ss", body, (size_t)blen);
 }
 
 /* ---------- init / exit ---------- */

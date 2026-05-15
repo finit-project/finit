@@ -102,6 +102,14 @@ void __w_string(struct link_writer *w, const char *s) { write_lenprefixed(w, s, 
 void __w_path  (struct link_writer *w, const char *s) { write_lenprefixed(w, s, 0); }
 void __w_sig   (struct link_writer *w, const char *s) { write_lenprefixed(w, s, 1); }
 
+/* Variant "v" containing a string.  Wire form:
+ *   1-byte sig length (1), 's', NUL, then the string per __w_string. */
+void __w_variant_string(struct link_writer *w, const char *s)
+{
+	__w_sig   (w, "s");
+	__w_string(w, s);
+}
+
 static size_t element_align(char c)
 {
 	switch (c) {
@@ -254,7 +262,40 @@ static int read_string_like(struct link_reader *r, const char **out)
 int __r_string(struct link_reader *r, const char **out) { return read_string_like(r, out); }
 int __r_path  (struct link_reader *r, const char **out) { return read_string_like(r, out); }
 
+/* Read a variant "v" expected to contain a string.  Fails if the
+ * inner signature is anything other than "s" (returns -1, *out set
+ * to NULL). */
+int __r_variant_string(struct link_reader *r, const char **out)
+{
+	uint8_t  sig_len;
+	uint32_t slen;
+
+	*out = NULL;
+
+	/* signature is "g" wire form: 1-byte length, bytes, NUL */
+	if (r_skip_align(r, 1) < 0 || r->off + 1 > r->cap) { r->err = 1; return -1; }
+	sig_len = r->base[r->off++];
+	if (sig_len != 1 || r->off + 2 > r->cap) { r->err = 1; return -1; }
+	if (r->base[r->off] != 's' || r->base[r->off + 1] != 0) { r->err = 1; return -1; }
+	r->off += 2;
+
+	/* now a normal string */
+	if (__r_u32(r, &slen) < 0) return -1;
+	if (r->off + (size_t)slen + 1 > r->cap || r->base[r->off + slen] != 0) {
+		r->err = 1;
+		return -1;
+	}
+	*out = (const char *)(r->base + r->off);
+	r->off += (size_t)slen + 1;
+	return 0;
+}
+
 int __r_done(const struct link_reader *r)
 {
 	return !r->err && r->off == r->cap;
+}
+
+int __r_align(struct link_reader *r, size_t n)
+{
+	return r_skip_align(r, n);
 }

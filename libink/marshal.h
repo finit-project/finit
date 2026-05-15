@@ -23,6 +23,7 @@ void __w_u32     (struct link_writer *w, uint32_t v);
 void __w_string  (struct link_writer *w, const char *s);  /* "s" */
 void __w_path    (struct link_writer *w, const char *s);  /* "o" */
 void __w_sig     (struct link_writer *w, const char *s);  /* "g" */
+void __w_variant_string(struct link_writer *w, const char *s);  /* "v" containing "s" */
 
 /* element_sig_first_char drives the alignment padding inserted
  * between the array length prefix and the first element. */
@@ -43,6 +44,8 @@ int  __r_bool  (struct link_reader *r, int      *out);
 int  __r_u32   (struct link_reader *r, uint32_t *out);
 int  __r_string(struct link_reader *r, const char **out);  /* "s" */
 int  __r_path  (struct link_reader *r, const char **out);  /* "o" */
+int  __r_variant_string(struct link_reader *r, const char **out); /* "v" containing "s" */
+int  __r_align (struct link_reader *r, size_t n);  /* skip to n-byte boundary */
 int  __r_done  (const struct link_reader *r);
 
 #endif /* LIBINK_MARSHAL_H_ */

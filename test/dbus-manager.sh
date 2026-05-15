@@ -67,3 +67,31 @@ case "$result" in
     *InvalidArgs*)  assert "Non-root reached signature check (InvalidArgs, not AccessDenied)" 0 -eq 0 ;;
     *)              fail "Unexpected reply from non-root ListServices: $result" ;;
 esac
+
+# ---------- Properties ----------
+
+say "Introspect on /org/finit/manager advertises org.freedesktop.DBus.Properties"
+xml=$(texec "$CLIENT" introspect "$BUS" /org/finit/manager)
+case "$xml" in
+    *'org.freedesktop.DBus.Properties'*) assert "Properties interface in XML" 0 -eq 0 ;;
+    *) fail "Properties interface missing from XML" ;;
+esac
+
+say "Manager1 declares Runlevel + Version as <property> in introspection XML"
+case "$xml" in
+    *'<property name="Runlevel"'*'<property name="Version"'*)
+        assert "Runlevel and Version both declared" 0 -eq 0 ;;
+    *)
+        fail "Property declarations missing or out of order: $xml" ;;
+esac
+
+say "initctl runlevel reads via Properties.Get when D-Bus available"
+# runlevel output format is "<prev> <curr>", e.g. "N 2".  Just check
+# we get a sensible two-token line.
+rl=$(texec initctl runlevel)
+case "$rl" in
+    [N0-9S]\ [0-9S])
+        assert "initctl runlevel returned '$rl'" 0 -eq 0 ;;
+    *)
+        fail "Unexpected initctl runlevel output: $rl" ;;
+esac

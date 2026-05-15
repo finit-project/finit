@@ -388,6 +388,9 @@ restart:
 		prevlevel    = runlevel;
 		runlevel     = sm.newlevel;
 		sm.newlevel = -1;
+#ifdef HAVE_DBUS
+		dbus_notify_runlevel_change(prevlevel, runlevel);
+#endif
 
 		/* Restore terse mode and run hooks before shutdown */
 		if (runlevel == 0 || runlevel == 6) {
