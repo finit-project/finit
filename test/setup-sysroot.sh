@@ -15,7 +15,13 @@ make -C "$top_builddir" DESTDIR="$SYSROOT" install
 
 mkdir -p "$SYSROOT/sbin/"
 cp "$top_builddir/test/src/serv" "$SYSROOT/sbin/"
-if [ -x "$top_builddir/test/src/dbus-auth-client" ]; then
+# Prefer the real ELF in .libs/ over the libtool wrapper script --
+# since the test client links libink.la, libtool wraps the top-level
+# dbus-auth-client as a shell script that re-execs the real binary
+# via its own RPATH, which falls apart inside the test namespace.
+if [ -x "$top_builddir/test/src/.libs/dbus-auth-client" ]; then
+    cp "$top_builddir/test/src/.libs/dbus-auth-client" "$SYSROOT/sbin/"
+elif [ -x "$top_builddir/test/src/dbus-auth-client" ]; then
     cp "$top_builddir/test/src/dbus-auth-client" "$SYSROOT/sbin/"
 fi
 
