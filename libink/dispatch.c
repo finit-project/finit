@@ -260,8 +260,12 @@ int ink__dispatch_message(ink_connection_t *conn, const struct ink_msg *m)
 			"Method call without path or member");
 	}
 
-	/* Built-in DBus interfaces (Hello, Ping, Introspect, Properties)
-	 * are handled here before object-tree lookup. */
+	/* Built-in DBus interfaces (Hello, Ping, Introspect) are handled
+	 * here before object-tree lookup, which means they also run
+	 * before the INK_METHOD_PRIVILEGED authz gate further down.  The
+	 * current set is read-only; do NOT introduce a state-changing
+	 * built-in without first adding equivalent authorisation inside
+	 * ink__handle_builtin. */
 	rc = ink__handle_builtin(conn, m);
 	if (rc >= 0)
 		return rc;	/* 0 = handled OK, 1 = built-in but failed; <0 = not a built-in */
@@ -289,6 +293,16 @@ int ink__dispatch_message(ink_connection_t *conn, const struct ink_msg *m)
 			return ink__send_error(conn, m,
 				"org.freedesktop.DBus.Error.InvalidArgs",
 				"Argument signature mismatch");
+	}
+
+	/* Per-method authorization.  PRIVILEGED methods require uid 0;
+	 * the peer's uid was captured via SO_PEERCRED at accept time
+	 * and verified against the AUTH EXTERNAL claim, so we can trust
+	 * conn->peer_uid here. */
+	if ((meth->flags & INK_METHOD_PRIVILEGED) && conn->peer_uid != 0) {
+		return ink__send_error(conn, m,
+			"org.freedesktop.DBus.Error.AccessDenied",
+			"Method requires root privileges");
 	}
 
 	memset(&call, 0, sizeof(call));

@@ -310,16 +310,25 @@ static int manager_poweroff(ink_call_t *c, void *u) { (void)u; return dbus_shutd
 static int manager_halt    (ink_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_HALT,   0); }
 
 static const ink_method_t manager_methods[] = {
-	{ .name = "ListServices", .in_sig = "",  .out_sig = "as", .handler = manager_list_services },
-	{ .name = "Start",        .in_sig = "s", .out_sig = "",   .handler = manager_start         },
-	{ .name = "Stop",         .in_sig = "s", .out_sig = "",   .handler = manager_stop          },
-	{ .name = "Restart",      .in_sig = "s", .out_sig = "",   .handler = manager_restart       },
-	{ .name = "Reload",       .in_sig = "",  .out_sig = "",   .handler = manager_reload        },
-	{ .name = "SetRunlevel",  .in_sig = "u", .out_sig = "",   .handler = manager_set_runlevel  },
-	{ .name = "Reboot",       .in_sig = "",  .out_sig = "",   .handler = manager_reboot        },
-	{ .name = "Poweroff",     .in_sig = "",  .out_sig = "",   .handler = manager_poweroff      },
-	{ .name = "Halt",         .in_sig = "",  .out_sig = "",   .handler = manager_halt          },
-	{ NULL, NULL, NULL, NULL }
+	{ .name = "ListServices", .in_sig = "",  .out_sig = "as",
+	  .handler = manager_list_services },
+	{ .name = "Start",        .in_sig = "s", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_start },
+	{ .name = "Stop",         .in_sig = "s", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_stop },
+	{ .name = "Restart",      .in_sig = "s", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_restart },
+	{ .name = "Reload",       .in_sig = "",  .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_reload },
+	{ .name = "SetRunlevel",  .in_sig = "u", .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_set_runlevel },
+	{ .name = "Reboot",       .in_sig = "",  .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_reboot },
+	{ .name = "Poweroff",     .in_sig = "",  .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_poweroff },
+	{ .name = "Halt",         .in_sig = "",  .out_sig = "",
+	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_halt },
+	{ NULL, NULL, NULL, 0, NULL }
 };
 
 static const ink_vtable_t manager_vtable = {

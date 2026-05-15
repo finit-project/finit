@@ -52,10 +52,14 @@ void  ink_connection_close   (ink_connection_t *conn);
 
 typedef int (*ink_method_fn)(ink_call_t *call, void *userdata);
 
+/* Method flags for ink_method_t.flags */
+#define INK_METHOD_PRIVILEGED  (1u << 0)  /* peer must be uid 0 (root) */
+
 typedef struct {
 	const char    *name;     /* member name */
 	const char    *in_sig;   /* input  signature (D-Bus, e.g. "" or "s") */
 	const char    *out_sig;  /* output signature */
+	unsigned       flags;    /* OR of INK_METHOD_* */
 	ink_method_fn  handler;
 } ink_method_t;
 

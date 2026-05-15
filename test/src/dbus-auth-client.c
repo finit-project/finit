@@ -625,6 +625,42 @@ static int mode_call_void(int argc, char *argv[])
 	return rc;
 }
 
+/* call-s-as-uid <uid> <sock> <obj> <iface> <method> <arg>
+ *
+ * Drops effective uid to <uid> (must work inside the test
+ * namespace where additional uids are mapped) before connecting,
+ * so AUTH EXTERNAL captures <uid> as the peer's real identity.
+ * Used to verify per-method authorization gating. */
+static int mode_call_s_as_uid(int argc, char *argv[])
+{
+	struct reply r;
+	uid_t  drop_to;
+	char  *ep = NULL;
+	long   v;
+	int    rc;
+
+	if (argc != 8) return 2;
+
+	errno = 0;
+	v = strtol(argv[2], &ep, 10);
+	if (errno || !ep || *ep != '\0' || v < 0 || v > 65535) {
+		fprintf(stderr, "%s: bad uid: %s\n", argv[0], argv[2]);
+		return 2;
+	}
+	drop_to = (uid_t)v;
+
+	if (setuid(drop_to) < 0) {
+		perror("setuid");
+		return 2;
+	}
+
+	rc = do_call_arg(argv[3], argv[4], argv[5], argv[6],
+			 "s", argv[7], 0, &r);
+	if (rc == 0)
+		printf("OK\n");
+	return rc;
+}
+
 static int mode_unknown(int argc, char *argv[])
 {
 	struct reply r;
@@ -647,8 +683,9 @@ int main(int argc, char *argv[])
 	if (strcmp(argv[1], "hello")       == 0) return mode_hello(argc, argv);
 	if (strcmp(argv[1], "introspect")  == 0) return mode_introspect(argc, argv);
 	if (strcmp(argv[1], "liststrings") == 0) return mode_liststrings(argc, argv);
-	if (strcmp(argv[1], "call-s")      == 0) return mode_call_s(argc, argv);
-	if (strcmp(argv[1], "call-void")   == 0) return mode_call_void(argc, argv);
+	if (strcmp(argv[1], "call-s")        == 0) return mode_call_s(argc, argv);
+	if (strcmp(argv[1], "call-void")     == 0) return mode_call_void(argc, argv);
+	if (strcmp(argv[1], "call-s-as-uid") == 0) return mode_call_s_as_uid(argc, argv);
 	if (strcmp(argv[1], "unknown")     == 0) return mode_unknown(argc, argv);
 	fprintf(stderr, "%s: unknown mode '%s'\n", argv[0], argv[1]);
 	return 2;

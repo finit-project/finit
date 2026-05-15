@@ -112,6 +112,37 @@ case "$(cat /tmp/dbus-stop.out)" in
     *) fail "Unexpected error reply: $(cat /tmp/dbus-stop.out)" ;;
 esac
 
+# ---------- Authorization ----------
+
+say "Manager1.Restart from non-root is rejected with AccessDenied"
+set +e
+texec "$CLIENT" call-s-as-uid 1 "$BUS" /org/finit/manager \
+    org.finit.Manager1 Restart "testserv" >/tmp/dbus-authz.out 2>&1
+authz_rc=$?
+set -e
+assert "Non-root Restart rejected (rc=$authz_rc)" "$authz_rc" -eq 1
+case "$(cat /tmp/dbus-authz.out)" in
+    *AccessDenied*) assert "Error is AccessDenied" 0 -eq 0 ;;
+    *) fail "Unexpected error: $(cat /tmp/dbus-authz.out)" ;;
+esac
+
+say "Manager1.ListServices is reachable as non-root (not blocked by authz)"
+# call-s-as-uid sends an "s" body; ListServices expects "", so the
+# server must reply with org.freedesktop.DBus.Error.InvalidArgs.
+# Asserting that *positive* marker (not just "no AccessDenied")
+# ensures we don't silently pass if setuid() failed or the client
+# never reached the server (e.g. a transport error would print
+# neither AccessDenied nor InvalidArgs).
+set +e
+result=$(texec "$CLIENT" call-s-as-uid 1 "$BUS" /org/finit/manager \
+         org.finit.Manager1 ListServices "" 2>&1)
+set -e
+case "$result" in
+    *AccessDenied*) fail "Non-root ListServices rejected by authz: $result" ;;
+    *InvalidArgs*)  assert "Non-root reached signature check (InvalidArgs, not AccessDenied)" 0 -eq 0 ;;
+    *)              fail "Unexpected reply from non-root ListServices: $result" ;;
+esac
+
 # ---------- Error reply ----------
 
 say "Unknown method gets an org.freedesktop.DBus.Error.* reply"
