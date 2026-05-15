@@ -10,12 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Message types (D-Bus spec §4: "Message Format"). */
-#define LINK_MSG_INVALID        0
-#define LINK_MSG_METHOD_CALL    1
-#define LINK_MSG_METHOD_RETURN  2
-#define LINK_MSG_ERROR          3
-#define LINK_MSG_SIGNAL         4
+#include "link.h"		/* LINK_MSG_* type codes */
 
 /* Message flags. */
 #define LINK_FLAG_NO_REPLY_EXPECTED  0x01

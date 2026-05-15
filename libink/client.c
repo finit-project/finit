@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <errno.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,6 +130,56 @@ static int read_one(link_client_t *c, struct link_msg *msg)
 	return 0;
 }
 
+static void publish_reply(link_client_t *c, const struct link_msg *m)
+{
+	c->reply.type       = m->type;
+	c->reply.signature  = m->signature;
+	c->reply.error_name = m->error_name;
+	c->reply.path       = m->path;
+	c->reply.interface  = m->interface;
+	c->reply.member     = m->member;
+	c->reply.body       = m->body_avail ? m->body : NULL;
+	c->reply.body_len   = m->body_avail;
+	c->have_reply       = 1;
+}
+
+/* The reply view in c->reply points into c->rxbuf and is invalidated
+ * the moment we touch that buffer again -- clear it at every entry,
+ * even on the bad-args path, so link_client_reply() cannot return
+ * stale dangling pointers from a previous call. */
+static void clear_reply(link_client_t *c)
+{
+	if (!c)
+		return;
+	memset(&c->reply, 0, sizeof(c->reply));
+	c->have_reply = 0;
+}
+
+/* Wait up to timeout_ms (-1 = forever) for one full inbound frame
+ * and publish it.  Returns 0 on success, 1 on timeout, -1 on error. */
+static int read_and_publish(link_client_t *c, int timeout_ms)
+{
+	struct link_msg msg;
+
+	if (timeout_ms >= 0) {
+		struct pollfd pfd = { .fd = c->fd, .events = POLLIN };
+		int rc;
+
+		do {
+			rc = poll(&pfd, 1, timeout_ms);
+		} while (rc < 0 && errno == EINTR);
+		if (rc < 0)
+			return -1;
+		if (rc == 0)
+			return 1;
+	}
+
+	if (read_one(c, &msg) < 0)
+		return -1;
+	publish_reply(c, &msg);
+	return 0;
+}
+
 int link_client_call(link_client_t *c,
 		     const char *obj_path,
 		     const char *interface,
@@ -143,17 +195,8 @@ int link_client_call(link_client_t *c,
 	uint8_t  hdr[1024];
 	ssize_t  hlen;
 	uint32_t serial;
-	struct link_msg reply;
 
-	/* Reply view from a previous call points into c->rxbuf and
-	 * is invalidated by every entry here -- clear it before the
-	 * arg-validation guard so a bad-args call also clears, rather
-	 * than leaving stale pointers visible via link_client_reply(). */
-	if (c) {
-		memset(&c->reply, 0, sizeof(c->reply));
-		c->have_reply = 0;
-	}
-
+	clear_reply(c);
 	if (!c || c->fd < 0 || !obj_path || !member)
 		return LINK_CALL_FAIL;
 
@@ -169,19 +212,12 @@ int link_client_call(link_client_t *c,
 	if (body_len > 0 && send_all(c->fd, body, body_len) < 0)
 		return LINK_CALL_FAIL;
 
-	if (read_one(c, &reply) < 0)
+	if (read_and_publish(c, -1) != 0)
 		return LINK_CALL_FAIL;
 
-	c->reply.type       = reply.type;
-	c->reply.signature  = reply.signature;
-	c->reply.error_name = reply.error_name;
-	c->reply.body       = reply.body_avail ? reply.body : NULL;
-	c->reply.body_len   = reply.body_avail;
-	c->have_reply       = 1;
-
-	if (reply.type == LINK_MSG_METHOD_RETURN)
+	if (c->reply.type == LINK_MSG_METHOD_RETURN)
 		return LINK_CALL_OK;
-	if (reply.type == LINK_MSG_ERROR)
+	if (c->reply.type == LINK_MSG_ERROR)
 		return LINK_CALL_ERROR;
 	return LINK_CALL_FAIL;
 }
@@ -248,4 +284,12 @@ int link_client_call_v(link_client_t *c,
 
 	return link_client_call(c, obj_path, interface, member,
 				signature, body, (size_t)body_len);
+}
+
+int link_client_wait(link_client_t *c, int timeout_ms)
+{
+	clear_reply(c);
+	if (!c || c->fd < 0)
+		return -1;
+	return read_and_publish(c, timeout_ms);
 }

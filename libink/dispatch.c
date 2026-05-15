@@ -312,6 +312,7 @@ int  link_r_u32   (link_reader_t *r, uint32_t *o)     { return __r_u32   (r, o);
 int  link_r_string(link_reader_t *r, const char **o)  { return __r_string(r, o); }
 int  link_r_path  (link_reader_t *r, const char **o)  { return __r_path  (r, o); }
 int  link_r_done  (const link_reader_t *r)            { return __r_done  (r);    }
+size_t link_r_pos (const link_reader_t *r)            { return r->off;           }
 
 /* ----------  dispatch entry point  ---------- */
 

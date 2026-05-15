@@ -36,6 +36,13 @@ typedef struct link_connection link_connection_t;
 typedef struct link_call       link_call_t;
 typedef struct link_client     link_client_t;
 
+/* D-Bus message type codes -- see link_reply_t.type. */
+#define LINK_MSG_INVALID        0
+#define LINK_MSG_METHOD_CALL    1
+#define LINK_MSG_METHOD_RETURN  2
+#define LINK_MSG_ERROR          3
+#define LINK_MSG_SIGNAL         4
+
 /* Writer is exposed so callers can stack-allocate one for marshalling
  * signal/reply bodies.  Treat the fields as opaque; use link_writer_init
  * + the link_w_* helpers + link_writer_finish.  Sized for typical D-Bus
@@ -63,15 +70,20 @@ typedef struct link_reader {
 	int            err;	/* sticky */
 } link_reader_t;
 
-/* View of a method-call reply, populated by link_client_call(_v) and
+/* View of an inbound message (method-return, error, or signal),
+ * populated by link_client_call(_v) and link_client_wait(), and
  * returned by link_client_reply().  All pointers reference internal
- * client storage and are invalidated by the next call on the same
- * client or by link_client_close().  `body` is NULL iff body_len==0;
- * `error_name` is non-NULL only when `type == LINK_MSG_ERROR`. */
+ * client storage and are invalidated by the next call or wait on the
+ * same client, or by link_client_close().  `body` is NULL iff
+ * body_len==0; `error_name` is non-NULL only when type == LINK_MSG_ERROR;
+ * `path`/`interface`/`member` are non-NULL on signals. */
 typedef struct {
-	uint8_t        type;	/* LINK_MSG_METHOD_RETURN or _ERROR */
+	uint8_t        type;	/* LINK_MSG_METHOD_RETURN, _ERROR, or _SIGNAL */
 	const char    *signature;
 	const char    *error_name;
+	const char    *path;
+	const char    *interface;
+	const char    *member;
 	const uint8_t *body;
 	size_t         body_len;
 } link_reply_t;
@@ -222,6 +234,20 @@ int link_client_call_v(link_client_t *c,
 
 const link_reply_t *link_client_reply(link_client_t *c);
 
+/* Wait up to `timeout_ms` milliseconds for the next inbound message
+ * (typically a SIGNAL delivered after an AddMatch subscription), and
+ * populate the same view returned by link_client_reply().
+ *   timeout_ms <  0 : block forever
+ *   timeout_ms == 0 : non-blocking (returns 1 immediately if no data)
+ *   timeout_ms >  0 : wait that long
+ * Returns 0 on success, 1 on timeout, -1 on transport/parse error.
+ *
+ * Note: the timeout gates only the wait for the first byte of the
+ * next frame.  Once data starts arriving the rest of the message is
+ * read blockingly; callers that need a hard upper bound should pass
+ * a positive timeout AND have a watchdog at a higher level. */
+int link_client_wait(link_client_t *c, int timeout_ms);
+
 /* ----------  standalone writer  ----------
  *
  * For marshalling bodies outside a method-call handler (signals,
@@ -248,13 +274,19 @@ void link_w_struct_end  (link_writer_t *w);
  * For decoding bodies received off the wire (reply or signal).
  * Initialise on the body pointer + length, read via link_r_*,
  * check link_r_done() to confirm everything was consumed. */
-void link_reader_init(link_reader_t *r, const uint8_t *body, size_t len);
-int  link_r_byte    (link_reader_t *r, uint8_t  *out);
-int  link_r_bool    (link_reader_t *r, int      *out);
-int  link_r_u32     (link_reader_t *r, uint32_t *out);
-int  link_r_string  (link_reader_t *r, const char **out);  /* "s" */
-int  link_r_path    (link_reader_t *r, const char **out);  /* "o" */
-int  link_r_done    (const link_reader_t *r);
+void   link_reader_init(link_reader_t *r, const uint8_t *body, size_t len);
+int    link_r_byte    (link_reader_t *r, uint8_t  *out);
+int    link_r_bool    (link_reader_t *r, int      *out);
+int    link_r_u32     (link_reader_t *r, uint32_t *out);
+int    link_r_string  (link_reader_t *r, const char **out);  /* "s" */
+int    link_r_path    (link_reader_t *r, const char **out);  /* "o" */
+int    link_r_done    (const link_reader_t *r);
+
+/* Byte offset of the next read inside the original body buffer.  Used
+ * to detect end-of-array when walking "a<T>" payloads: read the array
+ * byte-length prefix with link_r_u32 first, record (pos+length) as the
+ * end, then loop while link_r_pos < end. */
+size_t link_r_pos     (const link_reader_t *r);
 
 #ifdef __cplusplus
 }
