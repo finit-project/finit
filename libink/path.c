@@ -15,7 +15,7 @@ static int is_safe(unsigned char c)
 	    || (c >= '0' && c <= '9');
 }
 
-int ink_path_encode(const char *in, char *out, size_t outsz)
+int link_path_encode(const char *in, char *out, size_t outsz)
 {
 	static const char hex[] = "0123456789abcdef";
 	size_t off = 0;

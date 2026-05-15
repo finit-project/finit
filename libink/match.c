@@ -73,12 +73,12 @@ static int parse_kv(const char **p, char **out_key, char **out_value)
 	return 0;
 }
 
-struct ink_match *ink__match_parse(const char *rule)
+struct link_match *link__match_parse(const char *rule)
 {
-	struct ink_match *m;
+	struct link_match *m;
 	const char       *p;
 
-	if (!rule || strlen(rule) >= INK_MATCH_RULE_MAX) {
+	if (!rule || strlen(rule) >= LINK_MATCH_RULE_MAX) {
 		errno = EINVAL;
 		return NULL;
 	}
@@ -126,12 +126,12 @@ struct ink_match *ink__match_parse(const char *rule)
 	return m;
 
 bad:
-	ink__match_free(m);
+	link__match_free(m);
 	errno = EINVAL;
 	return NULL;
 }
 
-void ink__match_free(struct ink_match *m)
+void link__match_free(struct link_match *m)
 {
 	if (!m)
 		return;
@@ -152,7 +152,7 @@ static int field_matches(const char *want, const char *got)
 	return strcmp(want, got) == 0;
 }
 
-int ink__match_matches(const struct ink_match *m,
+int link__match_matches(const struct link_match *m,
 		       const char *path, const char *iface,
 		       const char *member)
 {
@@ -165,16 +165,16 @@ int ink__match_matches(const struct ink_match *m,
 	    && field_matches(m->member,    member);
 }
 
-int ink__match_add(ink_connection_t *conn, const char *rule)
+int link__match_add(link_connection_t *conn, const char *rule)
 {
-	struct ink_match *m;
+	struct link_match *m;
 
-	if (conn->matches_count >= INK_MATCH_PEER_CAP) {
+	if (conn->matches_count >= LINK_MATCH_PEER_CAP) {
 		errno = ENOSPC;
 		return -1;
 	}
 
-	m = ink__match_parse(rule);
+	m = link__match_parse(rule);
 	if (!m)
 		return -1;
 
@@ -182,13 +182,13 @@ int ink__match_add(ink_connection_t *conn, const char *rule)
 	return 0;
 }
 
-int ink__match_remove(ink_connection_t *conn, const char *rule)
+int link__match_remove(link_connection_t *conn, const char *rule)
 {
 	size_t i;
 
 	for (i = 0; i < conn->matches_count; i++) {
 		if (strcmp(conn->matches[i]->raw, rule) == 0) {
-			ink__match_free(conn->matches[i]);
+			link__match_free(conn->matches[i]);
 			conn->matches[i] = conn->matches[conn->matches_count - 1];
 			conn->matches_count--;
 			return 0;

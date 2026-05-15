@@ -75,7 +75,7 @@ static const char *parse_signature(const uint8_t *buf, size_t avail, size_t *con
 	return (const char *)(buf + 1);
 }
 
-ssize_t ink__msg_parse(const uint8_t *buf, size_t len, struct ink_msg *out)
+ssize_t link__msg_parse(const uint8_t *buf, size_t len, struct link_msg *out)
 {
 	uint32_t fields_len, total_hdr, body_off, total;
 	const uint8_t *fp, *fend;
@@ -89,7 +89,7 @@ ssize_t ink__msg_parse(const uint8_t *buf, size_t len, struct ink_msg *out)
 		errno = EPROTO;
 		return -1;
 	}
-	if (buf[3] != INK_PROTOCOL_VERSION) {
+	if (buf[3] != LINK_PROTOCOL_VERSION) {
 		errno = EPROTONOSUPPORT;
 		return -1;
 	}
@@ -138,25 +138,25 @@ ssize_t ink__msg_parse(const uint8_t *buf, size_t len, struct ink_msg *out)
 			const char *s = parse_string(fp, (size_t)(fend - fp), &used);
 			if (!s) { errno = EPROTO; return -1; }
 			switch (code) {
-			case INK_HDR_PATH:        out->path        = s; break;
-			case INK_HDR_INTERFACE:   out->interface   = s; break;
-			case INK_HDR_MEMBER:      out->member      = s; break;
-			case INK_HDR_ERROR_NAME:  out->error_name  = s; break;
-			case INK_HDR_DESTINATION: out->destination = s; break;
-			case INK_HDR_SENDER:      out->sender      = s; break;
+			case LINK_HDR_PATH:        out->path        = s; break;
+			case LINK_HDR_INTERFACE:   out->interface   = s; break;
+			case LINK_HDR_MEMBER:      out->member      = s; break;
+			case LINK_HDR_ERROR_NAME:  out->error_name  = s; break;
+			case LINK_HDR_DESTINATION: out->destination = s; break;
+			case LINK_HDR_SENDER:      out->sender      = s; break;
 			}
 			fp += used;
 		} else if (vsig[0] == 'g') {
 			const char *s = parse_signature(fp, (size_t)(fend - fp), &used);
 			if (!s) { errno = EPROTO; return -1; }
-			if (code == INK_HDR_SIGNATURE)
+			if (code == LINK_HDR_SIGNATURE)
 				out->signature = s;
 			fp += used;
 		} else if (vsig[0] == 'u') {
 			fp = buf + ALIGN_UP((size_t)(fp - buf), 4);
 			if (fp + 4 > fend) { errno = EPROTO; return -1; }
 			uint32_t v = rd_u32(fp);
-			if (code == INK_HDR_REPLY_SERIAL)
+			if (code == LINK_HDR_REPLY_SERIAL)
 				out->reply_serial = v;
 			fp += 4;
 		} else {
@@ -259,7 +259,7 @@ static ssize_t finalize_header(uint8_t *buf, size_t cap,
 	buf[0] = 'l';
 	buf[1] = type;
 	buf[2] = flags;
-	buf[3] = INK_PROTOCOL_VERSION;
+	buf[3] = LINK_PROTOCOL_VERSION;
 	wr_u32(buf + 4,  body_len);
 	wr_u32(buf + 8,  serial);
 	wr_u32(buf + 12, (uint32_t)(hdr_end - HDR_FIXED_SIZE));
@@ -271,7 +271,7 @@ static ssize_t finalize_header(uint8_t *buf, size_t cap,
 	return (ssize_t)hdr_end;
 }
 
-ssize_t ink__msg_build_return(uint8_t *buf, size_t cap,
+ssize_t link__msg_build_return(uint8_t *buf, size_t cap,
 			      uint32_t serial, uint32_t reply_serial,
 			      const char *destination,
 			      const char *signature, uint32_t body_len)
@@ -281,21 +281,21 @@ ssize_t ink__msg_build_return(uint8_t *buf, size_t cap,
 	if (cap < HDR_FIXED_SIZE)
 		return -1;
 
-	if (put_field_u32(buf, cap, &off, INK_HDR_REPLY_SERIAL, reply_serial) < 0)
+	if (put_field_u32(buf, cap, &off, LINK_HDR_REPLY_SERIAL, reply_serial) < 0)
 		return -1;
 	if (destination &&
-	    put_field_string(buf, cap, &off, INK_HDR_DESTINATION, 's', destination) < 0)
+	    put_field_string(buf, cap, &off, LINK_HDR_DESTINATION, 's', destination) < 0)
 		return -1;
 	if (signature && *signature &&
-	    put_field_string(buf, cap, &off, INK_HDR_SIGNATURE, 'g', signature) < 0)
+	    put_field_string(buf, cap, &off, LINK_HDR_SIGNATURE, 'g', signature) < 0)
 		return -1;
 
-	return finalize_header(buf, cap, INK_MSG_METHOD_RETURN,
-			       INK_FLAG_NO_REPLY_EXPECTED,
+	return finalize_header(buf, cap, LINK_MSG_METHOD_RETURN,
+			       LINK_FLAG_NO_REPLY_EXPECTED,
 			       body_len, serial, off);
 }
 
-ssize_t ink__msg_build_error(uint8_t *buf, size_t cap,
+ssize_t link__msg_build_error(uint8_t *buf, size_t cap,
 			     uint32_t serial, uint32_t reply_serial,
 			     const char *destination,
 			     const char *error_name,
@@ -306,23 +306,23 @@ ssize_t ink__msg_build_error(uint8_t *buf, size_t cap,
 	if (cap < HDR_FIXED_SIZE || !error_name)
 		return -1;
 
-	if (put_field_u32(buf, cap, &off, INK_HDR_REPLY_SERIAL, reply_serial) < 0)
+	if (put_field_u32(buf, cap, &off, LINK_HDR_REPLY_SERIAL, reply_serial) < 0)
 		return -1;
-	if (put_field_string(buf, cap, &off, INK_HDR_ERROR_NAME, 's', error_name) < 0)
+	if (put_field_string(buf, cap, &off, LINK_HDR_ERROR_NAME, 's', error_name) < 0)
 		return -1;
 	if (destination &&
-	    put_field_string(buf, cap, &off, INK_HDR_DESTINATION, 's', destination) < 0)
+	    put_field_string(buf, cap, &off, LINK_HDR_DESTINATION, 's', destination) < 0)
 		return -1;
 	if (signature && *signature &&
-	    put_field_string(buf, cap, &off, INK_HDR_SIGNATURE, 'g', signature) < 0)
+	    put_field_string(buf, cap, &off, LINK_HDR_SIGNATURE, 'g', signature) < 0)
 		return -1;
 
-	return finalize_header(buf, cap, INK_MSG_ERROR,
-			       INK_FLAG_NO_REPLY_EXPECTED,
+	return finalize_header(buf, cap, LINK_MSG_ERROR,
+			       LINK_FLAG_NO_REPLY_EXPECTED,
 			       body_len, serial, off);
 }
 
-ssize_t ink__msg_build_signal(uint8_t *buf, size_t cap,
+ssize_t link__msg_build_signal(uint8_t *buf, size_t cap,
 			      uint32_t serial,
 			      const char *path,
 			      const char *interface,
@@ -334,22 +334,22 @@ ssize_t ink__msg_build_signal(uint8_t *buf, size_t cap,
 	if (cap < HDR_FIXED_SIZE || !path || !interface || !member)
 		return -1;
 
-	if (put_field_string(buf, cap, &off, INK_HDR_PATH,      'o', path)      < 0)
+	if (put_field_string(buf, cap, &off, LINK_HDR_PATH,      'o', path)      < 0)
 		return -1;
-	if (put_field_string(buf, cap, &off, INK_HDR_INTERFACE, 's', interface) < 0)
+	if (put_field_string(buf, cap, &off, LINK_HDR_INTERFACE, 's', interface) < 0)
 		return -1;
-	if (put_field_string(buf, cap, &off, INK_HDR_MEMBER,    's', member)    < 0)
+	if (put_field_string(buf, cap, &off, LINK_HDR_MEMBER,    's', member)    < 0)
 		return -1;
 	if (signature && *signature &&
-	    put_field_string(buf, cap, &off, INK_HDR_SIGNATURE, 'g', signature) < 0)
+	    put_field_string(buf, cap, &off, LINK_HDR_SIGNATURE, 'g', signature) < 0)
 		return -1;
 
-	return finalize_header(buf, cap, INK_MSG_SIGNAL,
-			       INK_FLAG_NO_REPLY_EXPECTED,
+	return finalize_header(buf, cap, LINK_MSG_SIGNAL,
+			       LINK_FLAG_NO_REPLY_EXPECTED,
 			       body_len, serial, off);
 }
 
-size_t ink__msg_header_size(const struct ink_msg *m)
+size_t link__msg_header_size(const struct link_msg *m)
 {
 	(void)m;
 	/* Generous upper bound used by callers to size send buffers. */

@@ -16,6 +16,6 @@
  * if the output buffer cannot fit the result.  `outsz` must
  * accommodate the encoded bytes plus a trailing nul; the worst-case
  * size for an N-byte input is 3*N + 1. */
-int ink_path_encode(const char *in, char *out, size_t outsz);
+int link_path_encode(const char *in, char *out, size_t outsz);
 
 #endif /* LIBINK_PATH_H_ */

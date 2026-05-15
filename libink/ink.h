@@ -31,16 +31,16 @@
 extern "C" {
 #endif
 
-typedef struct ink_server     ink_server_t;
-typedef struct ink_connection ink_connection_t;
-typedef struct ink_call       ink_call_t;
+typedef struct link_server     link_server_t;
+typedef struct link_connection link_connection_t;
+typedef struct link_call       link_call_t;
 
 /* Writer is exposed so callers can stack-allocate one for marshalling
- * signal/reply bodies.  Treat the fields as opaque; use ink_writer_init
- * + the ink_w_* helpers + ink_writer_finish.  Sized for typical D-Bus
+ * signal/reply bodies.  Treat the fields as opaque; use link_writer_init
+ * + the link_w_* helpers + link_writer_finish.  Sized for typical D-Bus
  * messages -- the array stack supports up to 8 levels of nesting. */
-#define INK_WRITER_MAX_NESTING 8
-typedef struct ink_writer {
+#define LINK_WRITER_MAX_NESTING 8
+typedef struct link_writer {
 	uint8_t *buf;
 	size_t   cap;
 	size_t   off;
@@ -48,60 +48,60 @@ typedef struct ink_writer {
 	struct {
 		size_t lenpos;
 		size_t elemstart;
-	}      arrays[INK_WRITER_MAX_NESTING];
+	}      arrays[LINK_WRITER_MAX_NESTING];
 	size_t array_depth;
-} ink_writer_t;
+} link_writer_t;
 
 /* ----------  server / connection lifecycle  ---------- */
 
-int   ink_server_new   (ink_server_t **server, const char *path);
-void  ink_server_free  (ink_server_t  *server);
-int   ink_server_get_fd(const ink_server_t *server);
+int   link_server_new   (link_server_t **server, const char *path);
+void  link_server_free  (link_server_t  *server);
+int   link_server_get_fd(const link_server_t *server);
 
-int   ink_server_accept(ink_server_t *server, ink_connection_t **conn);
+int   link_server_accept(link_server_t *server, link_connection_t **conn);
 
-int   ink_connection_get_fd  (const ink_connection_t *conn);
-uid_t ink_connection_get_uid (const ink_connection_t *conn);
-int   ink_connection_process (ink_connection_t *conn);
-void  ink_connection_close   (ink_connection_t *conn);
+int   link_connection_get_fd  (const link_connection_t *conn);
+uid_t link_connection_get_uid (const link_connection_t *conn);
+int   link_connection_process (link_connection_t *conn);
+void  link_connection_close   (link_connection_t *conn);
 
 /* ----------  object registration  ---------- */
 
-typedef int (*ink_method_fn)(ink_call_t *call, void *userdata);
+typedef int (*link_method_fn)(link_call_t *call, void *userdata);
 
-/* Method flags for ink_method_t.flags */
-#define INK_METHOD_PRIVILEGED  (1u << 0)  /* peer must be uid 0 (root) */
+/* Method flags for link_method_t.flags */
+#define LINK_METHOD_PRIVILEGED  (1u << 0)  /* peer must be uid 0 (root) */
 
 typedef struct {
 	const char    *name;     /* member name */
 	const char    *in_sig;   /* input  signature (D-Bus, e.g. "" or "s") */
 	const char    *out_sig;  /* output signature */
-	unsigned       flags;    /* OR of INK_METHOD_* */
-	ink_method_fn  handler;
-} ink_method_t;
+	unsigned       flags;    /* OR of LINK_METHOD_* */
+	link_method_fn  handler;
+} link_method_t;
 
 typedef struct {
 	const char         *interface;          /* e.g. "org.finit.Manager1" */
-	const ink_method_t *methods;            /* terminated by {NULL, ...} */
-} ink_vtable_t;
+	const link_method_t *methods;            /* terminated by {NULL, ...} */
+} link_vtable_t;
 
 /* Register one (interface, methods) at `path`.  Calling repeatedly
  * with the same path and different vtables adds more interfaces at
  * that object.  The vtable pointer must outlive the server (typically
  * a static table). */
-int ink_server_add_object(ink_server_t *server, const char *path,
-			  const ink_vtable_t *vt, void *userdata);
+int link_server_add_object(link_server_t *server, const char *path,
+			  const link_vtable_t *vt, void *userdata);
 
 /* Remove every vtable registered at `path` and free the object.
  * Returns 0 if the object existed, -1 (errno=ENOENT) otherwise. */
-int ink_server_remove_object(ink_server_t *server, const char *path);
+int link_server_remove_object(link_server_t *server, const char *path);
 
 /* ----------  call accessors  ---------- */
 
-const char *ink_call_path     (const ink_call_t *call);
-const char *ink_call_interface(const ink_call_t *call);
-const char *ink_call_member   (const ink_call_t *call);
-uid_t       ink_call_uid      (const ink_call_t *call);
+const char *link_call_path     (const link_call_t *call);
+const char *link_call_interface(const link_call_t *call);
+const char *link_call_member   (const link_call_t *call);
+uid_t       link_call_uid      (const link_call_t *call);
 
 /* ----------  reading method-call arguments  ----------
  *
@@ -112,11 +112,11 @@ uid_t       ink_call_uid      (const ink_call_t *call);
  * connection's rx buffer and are valid for the duration of the
  * method handler. */
 
-int ink_call_read_byte  (ink_call_t *call, uint8_t  *out);
-int ink_call_read_bool  (ink_call_t *call, int      *out);
-int ink_call_read_u32   (ink_call_t *call, uint32_t *out);
-int ink_call_read_string(ink_call_t *call, const char **out);  /* "s" */
-int ink_call_read_path  (ink_call_t *call, const char **out);  /* "o" */
+int link_call_read_byte  (link_call_t *call, uint8_t  *out);
+int link_call_read_bool  (link_call_t *call, int      *out);
+int link_call_read_u32   (link_call_t *call, uint32_t *out);
+int link_call_read_string(link_call_t *call, const char **out);  /* "s" */
+int link_call_read_path  (link_call_t *call, const char **out);  /* "o" */
 
 /* ----------  reply construction  ---------- */
 
@@ -124,12 +124,12 @@ int ink_call_read_path  (ink_call_t *call, const char **out);  /* "o" */
  * from the handler.  Dispatch finalizes and sends the reply with
  * the out_sig declared on the vtable.  May be called once per
  * call. */
-ink_writer_t *ink_call_reply(ink_call_t *call);
+link_writer_t *link_call_reply(link_call_t *call);
 
 /* Send a D-Bus error reply.  `name` must be a valid D-Bus error
  * name (e.g. "org.freedesktop.DBus.Error.UnknownMethod"); `message`
  * may be NULL. */
-int ink_call_reply_error(ink_call_t *call, const char *name, const char *message);
+int link_call_reply_error(link_call_t *call, const char *name, const char *message);
 
 /* ----------  signal emission  ----------
  *
@@ -140,7 +140,7 @@ int ink_call_reply_error(ink_call_t *call, const char *name, const char *message
  * wire and the connection is still usable; anything else is a
  * transport failure that may have left a partial frame -- the
  * caller must drop the peer. */
-int ink_connection_emit_signal(ink_connection_t *conn,
+int link_connection_emit_signal(link_connection_t *conn,
 			       const char *path,
 			       const char *interface,
 			       const char *member,
@@ -151,22 +151,22 @@ int ink_connection_emit_signal(ink_connection_t *conn,
  *
  * For marshalling bodies outside a method-call handler (signals,
  * pre-computed replies).  Initialise on a caller-owned buffer,
- * write args via ink_w_*, then call ink_writer_finish which
+ * write args via link_w_*, then call link_writer_finish which
  * returns the body length or -1 on overflow. */
-void    ink_writer_init  (ink_writer_t *w, uint8_t *buf, size_t cap);
-ssize_t ink_writer_finish(ink_writer_t *w);
+void    link_writer_init  (link_writer_t *w, uint8_t *buf, size_t cap);
+ssize_t link_writer_finish(link_writer_t *w);
 
 /* ----------  writer (mirrors the internal marshaller)  ---------- */
 
-void ink_w_byte    (ink_writer_t *w, uint8_t v);
-void ink_w_bool    (ink_writer_t *w, int v);
-void ink_w_u32     (ink_writer_t *w, uint32_t v);
-void ink_w_string  (ink_writer_t *w, const char *s);  /* "s" */
-void ink_w_path    (ink_writer_t *w, const char *s);  /* "o" */
-void ink_w_array_begin (ink_writer_t *w, char element_sig);
-void ink_w_array_end   (ink_writer_t *w);
-void ink_w_struct_begin(ink_writer_t *w);
-void ink_w_struct_end  (ink_writer_t *w);
+void link_w_byte    (link_writer_t *w, uint8_t v);
+void link_w_bool    (link_writer_t *w, int v);
+void link_w_u32     (link_writer_t *w, uint32_t v);
+void link_w_string  (link_writer_t *w, const char *s);  /* "s" */
+void link_w_path    (link_writer_t *w, const char *s);  /* "o" */
+void link_w_array_begin (link_writer_t *w, char element_sig);
+void link_w_array_end   (link_writer_t *w);
+void link_w_struct_begin(link_writer_t *w);
+void link_w_struct_end  (link_writer_t *w);
 
 #ifdef __cplusplus
 }

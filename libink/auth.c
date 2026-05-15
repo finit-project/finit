@@ -49,12 +49,12 @@ static int reply(int fd, const char *line)
 	return write_all(fd, line, strlen(line));
 }
 
-static int reject(ink_connection_t *conn)
+static int reject(link_connection_t *conn)
 {
 	return write_all(conn->fd, rejected_ext, sizeof(rejected_ext) - 1);
 }
 
-void ink__auth_generate_guid(char out[33])
+void link__auth_generate_guid(char out[33])
 {
 	static const char hex[] = "0123456789abcdef";
 	uint8_t raw[16];
@@ -116,7 +116,7 @@ static int parse_external_uid(const char *arg, size_t arglen, uid_t *out)
 	return 0;
 }
 
-static int handle_line(ink_connection_t *conn, const char *line, size_t len)
+static int handle_line(link_connection_t *conn, const char *line, size_t len)
 {
 	if (len >= 14 && memcmp(line, "AUTH EXTERNAL ", 14) == 0) {
 		uid_t claimed;
@@ -138,7 +138,7 @@ static int handle_line(ink_connection_t *conn, const char *line, size_t len)
 		return reply(conn->fd, "ERROR fd-passing not supported\r\n");
 
 	if (len == 5 && memcmp(line, "BEGIN", 5) == 0) {
-		conn->auth = INK_AUTH_DONE;
+		conn->auth = LINK_AUTH_DONE;
 		return 0;
 	}
 
@@ -154,7 +154,7 @@ static int handle_line(ink_connection_t *conn, const char *line, size_t len)
 /* Pull one CR+LF-terminated line out of conn->linebuf.  Returns the
  * line length (without the CR+LF), or 0 if no complete line is
  * present yet.  Consumes the line on success. */
-static size_t take_line(ink_connection_t *conn, char *out, size_t outsz)
+static size_t take_line(link_connection_t *conn, char *out, size_t outsz)
 {
 	size_t i;
 
@@ -178,7 +178,7 @@ static size_t take_line(ink_connection_t *conn, char *out, size_t outsz)
 	return 0;
 }
 
-int ink__auth_process(ink_connection_t *conn)
+int link__auth_process(link_connection_t *conn)
 {
 	uint8_t buf[256];
 	ssize_t n;
@@ -193,22 +193,22 @@ int ink__auth_process(ink_connection_t *conn)
 		return -1;
 	}
 
-	if (conn->auth == INK_AUTH_NUL) {
+	if (conn->auth == LINK_AUTH_NUL) {
 		if (buf[0] != 0x00) {
-			conn->auth = INK_AUTH_FAILED;
+			conn->auth = LINK_AUTH_FAILED;
 			return -1;
 		}
 		off = 1;
-		conn->auth = INK_AUTH_LINE;
+		conn->auth = LINK_AUTH_LINE;
 	}
 
-	if (conn->auth == INK_AUTH_LINE) {
+	if (conn->auth == LINK_AUTH_LINE) {
 		size_t take = (size_t)n - off;
-		char line[INK_AUTH_LINEBUF_SIZE];
+		char line[LINK_AUTH_LINEBUF_SIZE];
 		size_t linelen;
 
 		if (conn->linelen + take > sizeof(conn->linebuf)) {
-			conn->auth = INK_AUTH_FAILED;
+			conn->auth = LINK_AUTH_FAILED;
 			return -1;
 		}
 		memcpy(conn->linebuf + conn->linelen, buf + off, take);
@@ -217,7 +217,7 @@ int ink__auth_process(ink_connection_t *conn)
 		while ((linelen = take_line(conn, line, sizeof(line))) > 0) {
 			if (handle_line(conn, line, linelen) < 0)
 				return -1;
-			if (conn->auth != INK_AUTH_LINE)
+			if (conn->auth != LINK_AUTH_LINE)
 				break;
 		}
 
@@ -225,7 +225,7 @@ int ink__auth_process(ink_connection_t *conn)
 		 * are the first bytes of the binary D-Bus stream — move
 		 * them to rxbuf so the dispatcher can pick them up on the
 		 * next process() call. */
-		if (conn->auth == INK_AUTH_DONE && conn->linelen > 0) {
+		if (conn->auth == LINK_AUTH_DONE && conn->linelen > 0) {
 			if (conn->linelen > sizeof(conn->rxbuf))
 				return -1;
 			memcpy(conn->rxbuf, conn->linebuf, conn->linelen);

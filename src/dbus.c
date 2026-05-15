@@ -55,19 +55,19 @@
 
 struct peer {
 	uev_t              watcher;
-	ink_connection_t  *conn;
+	link_connection_t  *conn;
 	TAILQ_ENTRY(peer)  link;
 };
 
 static TAILQ_HEAD(, peer) peers = TAILQ_HEAD_INITIALIZER(peers);
-static ink_server_t      *server;
+static link_server_t      *server;
 static uev_t              accept_watcher;
 static size_t             peer_count;
 
 static void peer_drop(struct peer *p)
 {
 	uev_io_stop(&p->watcher);
-	ink_connection_close(p->conn);
+	link_connection_close(p->conn);
 	TAILQ_REMOVE(&peers, p, link);
 	peer_count--;
 	free(p);
@@ -84,7 +84,7 @@ static void peer_cb(uev_t *w, void *arg, int events)
 		return;
 	}
 
-	if (ink_connection_process(p->conn) < 0)
+	if (link_connection_process(p->conn) < 0)
 		peer_drop(p);
 }
 
@@ -98,10 +98,10 @@ static void accept_cb(uev_t *w, void *arg, int events)
 	}
 
 	for (;;) {
-		ink_connection_t *conn = NULL;
+		link_connection_t *conn = NULL;
 		struct peer *p;
 
-		if (ink_server_accept(server, &conn) < 0) {
+		if (link_server_accept(server, &conn) < 0) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK)
 				err(1, "Failed accepting D-Bus client");
 			break;
@@ -110,13 +110,13 @@ static void accept_cb(uev_t *w, void *arg, int events)
 		if (peer_count >= DBUS_MAX_PEERS) {
 			logit(LOG_WARNING, "D-Bus peer cap reached (%zu), dropping",
 			      peer_count);
-			ink_connection_close(conn);
+			link_connection_close(conn);
 			continue;
 		}
 
 		p = calloc(1, sizeof(*p));
 		if (!p) {
-			ink_connection_close(conn);
+			link_connection_close(conn);
 			err(1, "Out of memory accepting D-Bus client");
 			break;
 		}
@@ -126,7 +126,7 @@ static void accept_cb(uev_t *w, void *arg, int events)
 		peer_count++;
 
 		if (uev_io_init(w->ctx, &p->watcher, peer_cb, p,
-				ink_connection_get_fd(conn), UEV_READ)) {
+				link_connection_get_fd(conn), UEV_READ)) {
 			err(1, "Failed registering D-Bus peer watcher");
 			peer_drop(p);
 		}
@@ -142,57 +142,57 @@ static void accept_cb(uev_t *w, void *arg, int events)
 #define FINIT_SVC_PATH_MAX 512
 static int service_path_for(svc_t *svc, char *buf, size_t bufsz);
 
-static int manager_list_services(ink_call_t *call, void *userdata)
+static int manager_list_services(link_call_t *call, void *userdata)
 {
-	ink_writer_t *w;
+	link_writer_t *w;
 	svc_t        *iter = NULL;
 	svc_t        *svc;
 
 	(void)userdata;
 
-	w = ink_call_reply(call);
+	w = link_call_reply(call);
 	if (!w)
 		return -1;
 
-	ink_w_array_begin(w, 's');
+	link_w_array_begin(w, 's');
 	for (svc = svc_iterator(&iter, 1); svc; svc = svc_iterator(&iter, 0)) {
 		char ident[MAX_IDENT_LEN];
 
 		svc_ident(svc, ident, sizeof(ident));
-		ink_w_string(w, ident);
+		link_w_string(w, ident);
 	}
-	ink_w_array_end(w);
+	link_w_array_end(w);
 	return 0;
 }
 
-static int manager_get_service(ink_call_t *call, void *userdata)
+static int manager_get_service(link_call_t *call, void *userdata)
 {
 	const char *ident;
 	svc_t      *svc;
 	char        path[FINIT_SVC_PATH_MAX];
-	ink_writer_t *w;
+	link_writer_t *w;
 
 	(void)userdata;
 
-	if (ink_call_read_string(call, &ident) < 0)
-		return ink_call_reply_error(call,
+	if (link_call_read_string(call, &ident) < 0)
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"expected (s)");
 
 	svc = svc_find_by_str(ident);
 	if (!svc)
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.finit.Error.NoSuchService", ident);
 
 	if (service_path_for(svc, path, sizeof(path)) < 0)
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.finit.Error.Failed",
 			"Path encoding overflow");
 
-	w = ink_call_reply(call);
+	w = link_call_reply(call);
 	if (!w)
 		return -1;
-	ink_w_path(w, path);
+	link_w_path(w, path);
 	return 0;
 }
 
@@ -277,28 +277,28 @@ static int dispatch_action(const char *ident,
 	return rc;
 }
 
-static int manager_take_string_method(ink_call_t *call,
+static int manager_take_string_method(link_call_t *call,
 				      int (*action)(svc_t *, void *))
 {
 	const char *ident;
 
-	if (ink_call_read_string(call, &ident) < 0)
-		return ink_call_reply_error(call,
+	if (link_call_read_string(call, &ident) < 0)
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"expected (s)");
 	if (dispatch_action(ident, action) != 0)
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.finit.Error.NoSuchService", ident);
 
-	(void)ink_call_reply(call);	/* empty reply */
+	(void)link_call_reply(call);	/* empty reply */
 	return 0;
 }
 
-static int manager_start  (ink_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_start);   }
-static int manager_stop   (ink_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_stop);    }
-static int manager_restart(ink_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_restart); }
+static int manager_start  (link_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_start);   }
+static int manager_stop   (link_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_stop);    }
+static int manager_restart(link_call_t *call, void *u) { (void)u; return manager_take_string_method(call, dbus_apply_restart); }
 
-static int manager_reload(ink_call_t *call, void *userdata)
+static int manager_reload(link_call_t *call, void *userdata)
 {
 	(void)userdata;
 	/*
@@ -309,21 +309,21 @@ static int manager_reload(ink_call_t *call, void *userdata)
 		warnx("Ignoring reload in runlevel S and 6/0.");
 	else
 		sm_reload();
-	(void)ink_call_reply(call);
+	(void)link_call_reply(call);
 	return 0;
 }
 
-static int manager_set_runlevel(ink_call_t *call, void *userdata)
+static int manager_set_runlevel(link_call_t *call, void *userdata)
 {
 	uint32_t lvl;
 
 	(void)userdata;
-	if (ink_call_read_u32(call, &lvl) < 0)
-		return ink_call_reply_error(call,
+	if (link_call_read_u32(call, &lvl) < 0)
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"expected (u)");
 	if (lvl > 9 || lvl == INIT_LEVEL)
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"runlevel must be 0-9 (excluding internal levels)");
 
@@ -331,51 +331,51 @@ static int manager_set_runlevel(ink_call_t *call, void *userdata)
 	if (lvl == 6) halt = SHUT_REBOOT;
 	sm_runlevel((int)lvl);
 
-	(void)ink_call_reply(call);
+	(void)link_call_reply(call);
 	return 0;
 }
 
-static int dbus_shutdown(ink_call_t *call, shutop_t target, int level)
+static int dbus_shutdown(link_call_t *call, shutop_t target, int level)
 {
 	if (IS_RESERVED_RUNLEVEL(runlevel))
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.finit.Error.WrongRunlevel",
 			"Already in shutdown");
 	halt = target;
 	sm_runlevel(level);
-	(void)ink_call_reply(call);
+	(void)link_call_reply(call);
 	return 0;
 }
 
-static int manager_reboot  (ink_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_REBOOT, 6); }
-static int manager_poweroff(ink_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_OFF,    0); }
-static int manager_halt    (ink_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_HALT,   0); }
+static int manager_reboot  (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_REBOOT, 6); }
+static int manager_poweroff(link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_OFF,    0); }
+static int manager_halt    (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_HALT,   0); }
 
-static const ink_method_t manager_methods[] = {
+static const link_method_t manager_methods[] = {
 	{ .name = "ListServices", .in_sig = "",  .out_sig = "as",
 	  .handler = manager_list_services },
 	{ .name = "GetService",   .in_sig = "s", .out_sig = "o",
 	  .handler = manager_get_service },
 	{ .name = "Start",        .in_sig = "s", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_start },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_start },
 	{ .name = "Stop",         .in_sig = "s", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_stop },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_stop },
 	{ .name = "Restart",      .in_sig = "s", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_restart },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_restart },
 	{ .name = "Reload",       .in_sig = "",  .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_reload },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_reload },
 	{ .name = "SetRunlevel",  .in_sig = "u", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_set_runlevel },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_set_runlevel },
 	{ .name = "Reboot",       .in_sig = "",  .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_reboot },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_reboot },
 	{ .name = "Poweroff",     .in_sig = "",  .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_poweroff },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_poweroff },
 	{ .name = "Halt",         .in_sig = "",  .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = manager_halt },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_halt },
 	{ NULL, NULL, NULL, 0, NULL }
 };
 
-static const ink_vtable_t manager_vtable = {
+static const link_vtable_t manager_vtable = {
 	.interface = "org.finit.Manager1",
 	.methods   = manager_methods,
 };
@@ -391,52 +391,52 @@ static const ink_vtable_t manager_vtable = {
  * defined near the top of the file so Manager1.GetService can refer
  * to them. */
 
-static int service_action_method(ink_call_t *call, void *userdata,
+static int service_action_method(link_call_t *call, void *userdata,
 				 int (*action)(svc_t *, void *))
 {
 	svc_t *svc = userdata;
 
 	if (!svc)
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.finit.Error.NoSuchService",
 			"Service object no longer valid");
 
 	action(svc, NULL);
-	(void)ink_call_reply(call);
+	(void)link_call_reply(call);
 	return 0;
 }
 
-static int service1_start  (ink_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_start);   }
-static int service1_stop   (ink_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_stop);    }
-static int service1_restart(ink_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_restart); }
+static int service1_start  (link_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_start);   }
+static int service1_stop   (link_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_stop);    }
+static int service1_restart(link_call_t *c, void *u) { return service_action_method(c, u, dbus_apply_restart); }
 
-static int service1_reload(ink_call_t *call, void *userdata)
+static int service1_reload(link_call_t *call, void *userdata)
 {
 	svc_t *svc = userdata;
 
 	if (!svc)
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.finit.Error.NoSuchService",
 			"Service object no longer valid");
 
 	service_reload(svc);
-	(void)ink_call_reply(call);
+	(void)link_call_reply(call);
 	return 0;
 }
 
-static const ink_method_t service_methods[] = {
+static const link_method_t service_methods[] = {
 	{ .name = "Start",   .in_sig = "", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_start   },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = service1_start   },
 	{ .name = "Stop",    .in_sig = "", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_stop    },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = service1_stop    },
 	{ .name = "Restart", .in_sig = "", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_restart },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = service1_restart },
 	{ .name = "Reload",  .in_sig = "", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = service1_reload  },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = service1_reload  },
 	{ NULL, NULL, NULL, 0, NULL }
 };
 
-static const ink_vtable_t service_vtable = {
+static const link_vtable_t service_vtable = {
 	.interface = "org.finit.Service1",
 	.methods   = service_methods,
 };
@@ -454,7 +454,7 @@ static int service_path_for(svc_t *svc, char *buf, size_t bufsz)
 	memcpy(buf, SERVICE_PATH_PREFIX, plen);
 
 	svc_ident(svc, ident, sizeof(ident));
-	enc = ink_path_encode(ident, buf + plen, bufsz - plen);
+	enc = link_path_encode(ident, buf + plen, bufsz - plen);
 	if (enc < 0)
 		return -1;
 	return (int)plen + enc;
@@ -469,7 +469,7 @@ void dbus_register_service(svc_t *svc)
 	if (service_path_for(svc, path, sizeof(path)) < 0)
 		return;
 
-	if (ink_server_add_object(server, path, &service_vtable, svc) < 0)
+	if (link_server_add_object(server, path, &service_vtable, svc) < 0)
 		logit(LOG_WARNING, "dbus: failed registering %s", path);
 }
 
@@ -482,7 +482,7 @@ void dbus_unregister_service(svc_t *svc)
 	if (service_path_for(svc, path, sizeof(path)) < 0)
 		return;
 
-	(void)ink_server_remove_object(server, path);
+	(void)link_server_remove_object(server, path);
 }
 
 /* ---------- signal emission: ServiceStateChanged ---------- */
@@ -519,7 +519,7 @@ static const char *state_name(svc_state_t s)
 void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
 {
 	uint8_t        body[256];
-	ink_writer_t   w;
+	link_writer_t   w;
 	struct peer   *p;
 	char           ident[MAX_IDENT_LEN];
 	ssize_t        blen;
@@ -533,16 +533,16 @@ void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
 
 	svc_ident(svc, ident, sizeof(ident));
 
-	ink_writer_init(&w, body, sizeof(body));
-	ink_w_string(&w, ident);
-	ink_w_string(&w, state_name(o));
-	ink_w_string(&w, state_name(n));
-	blen = ink_writer_finish(&w);
+	link_writer_init(&w, body, sizeof(body));
+	link_w_string(&w, ident);
+	link_w_string(&w, state_name(o));
+	link_w_string(&w, state_name(n));
+	blen = link_writer_finish(&w);
 	if (blen < 0)
 		return;
 
 	TAILQ_FOREACH(p, &peers, link)
-		(void)ink_connection_emit_signal(p->conn,
+		(void)link_connection_emit_signal(p->conn,
 				"/org/finit/manager",
 				"org.finit.Manager1",
 				"ServiceStateChanged",
@@ -609,43 +609,43 @@ static int cond_name_valid(const char *name)
 	return 1;
 }
 
-static int cond1_get(ink_call_t *call, void *userdata)
+static int cond1_get(link_call_t *call, void *userdata)
 {
 	const char    *name;
-	ink_writer_t  *w;
+	link_writer_t  *w;
 
 	(void)userdata;
 
-	if (ink_call_read_string(call, &name) < 0)
-		return ink_call_reply_error(call,
+	if (link_call_read_string(call, &name) < 0)
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"expected (s)");
 	if (!cond_name_valid(name))
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"invalid condition name");
 
-	w = ink_call_reply(call);
+	w = link_call_reply(call);
 	if (!w)
 		return -1;
-	ink_w_string(w, condstr(cond_get(name)));
+	link_w_string(w, condstr(cond_get(name)));
 	return 0;
 }
 
-static int cond1_set_or_clear(ink_call_t *call, int do_set)
+static int cond1_set_or_clear(link_call_t *call, int do_set)
 {
 	const char *name;
 	char        buf[128];
 	const char *full;
 
-	if (ink_call_read_string(call, &name) < 0)
-		return ink_call_reply_error(call,
+	if (link_call_read_string(call, &name) < 0)
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"expected (s)");
 
 	full = normalise_usr_cond(name, buf, sizeof(buf));
 	if (!full)
-		return ink_call_reply_error(call,
+		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Set/Clear is restricted to usr/* conditions");
 
@@ -661,16 +661,16 @@ static int cond1_set_or_clear(ink_call_t *call, int do_set)
 	else
 		cond_clear(full);
 
-	(void)ink_call_reply(call);
+	(void)link_call_reply(call);
 	return 0;
 }
 
-static int cond1_set  (ink_call_t *c, void *u) { (void)u; return cond1_set_or_clear(c, 1); }
-static int cond1_clear(ink_call_t *c, void *u) { (void)u; return cond1_set_or_clear(c, 0); }
+static int cond1_set  (link_call_t *c, void *u) { (void)u; return cond1_set_or_clear(c, 1); }
+static int cond1_clear(link_call_t *c, void *u) { (void)u; return cond1_set_or_clear(c, 0); }
 
 /* nftw() can't pass user data so a single static handle ferries the
  * writer into the callback.  Safe because dispatch is single-threaded. */
-static ink_writer_t *cond_walk_writer;
+static link_writer_t *cond_walk_writer;
 static int           cond_walk_dump;
 
 static int cond_walk_cb(const char *fpath, const struct stat *sb,
@@ -695,61 +695,61 @@ static int cond_walk_cb(const char *fpath, const struct stat *sb,
 
 	if (cond_walk_dump) {
 		state = condstr(cond_get_path(fpath));
-		ink_w_struct_begin(cond_walk_writer);
-		ink_w_string(cond_walk_writer, name);
-		ink_w_string(cond_walk_writer, state);
-		ink_w_struct_end(cond_walk_writer);
+		link_w_struct_begin(cond_walk_writer);
+		link_w_string(cond_walk_writer, name);
+		link_w_string(cond_walk_writer, state);
+		link_w_struct_end(cond_walk_writer);
 	} else {
-		ink_w_string(cond_walk_writer, name);
+		link_w_string(cond_walk_writer, name);
 	}
 	return 0;
 }
 
-static int cond1_list(ink_call_t *call, void *userdata)
+static int cond1_list(link_call_t *call, void *userdata)
 {
-	ink_writer_t *w;
+	link_writer_t *w;
 
 	(void)userdata;
 
-	w = ink_call_reply(call);
+	w = link_call_reply(call);
 	if (!w)
 		return -1;
 
-	ink_w_array_begin(w, 's');
+	link_w_array_begin(w, 's');
 	cond_walk_writer = w;
 	cond_walk_dump   = 0;
 	(void)nftw(_PATH_COND, cond_walk_cb, 20, 0);
 	cond_walk_writer = NULL;
-	ink_w_array_end(w);
+	link_w_array_end(w);
 	return 0;
 }
 
-static int cond1_dump(ink_call_t *call, void *userdata)
+static int cond1_dump(link_call_t *call, void *userdata)
 {
-	ink_writer_t *w;
+	link_writer_t *w;
 
 	(void)userdata;
 
-	w = ink_call_reply(call);
+	w = link_call_reply(call);
 	if (!w)
 		return -1;
 
-	ink_w_array_begin(w, '(');
+	link_w_array_begin(w, '(');
 	cond_walk_writer = w;
 	cond_walk_dump   = 1;
 	(void)nftw(_PATH_COND, cond_walk_cb, 20, 0);
 	cond_walk_writer = NULL;
-	ink_w_array_end(w);
+	link_w_array_end(w);
 	return 0;
 }
 
-static const ink_method_t cond_methods[] = {
+static const link_method_t cond_methods[] = {
 	{ .name = "Get",   .in_sig = "s", .out_sig = "s",
 	  .handler = cond1_get },
 	{ .name = "Set",   .in_sig = "s", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = cond1_set },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = cond1_set },
 	{ .name = "Clear", .in_sig = "s", .out_sig = "",
-	  .flags = INK_METHOD_PRIVILEGED, .handler = cond1_clear },
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = cond1_clear },
 	{ .name = "List",  .in_sig = "",  .out_sig = "as",
 	  .handler = cond1_list },
 	{ .name = "Dump",  .in_sig = "",  .out_sig = "a(ss)",
@@ -757,7 +757,7 @@ static const ink_method_t cond_methods[] = {
 	{ NULL, NULL, NULL, 0, NULL }
 };
 
-static const ink_vtable_t cond_vtable = {
+static const link_vtable_t cond_vtable = {
 	.interface = COND_INTERFACE,
 	.methods   = cond_methods,
 };
@@ -767,7 +767,7 @@ static const ink_vtable_t cond_vtable = {
 void dbus_notify_condition_change(const char *name, const char *state)
 {
 	uint8_t        body[256];
-	ink_writer_t   w;
+	link_writer_t   w;
 	struct peer   *p;
 	ssize_t        blen;
 
@@ -776,15 +776,15 @@ void dbus_notify_condition_change(const char *name, const char *state)
 	if (TAILQ_EMPTY(&peers))
 		return;
 
-	ink_writer_init(&w, body, sizeof(body));
-	ink_w_string(&w, name);
-	ink_w_string(&w, state);
-	blen = ink_writer_finish(&w);
+	link_writer_init(&w, body, sizeof(body));
+	link_w_string(&w, name);
+	link_w_string(&w, state);
+	blen = link_writer_finish(&w);
 	if (blen < 0)
 		return;
 
 	TAILQ_FOREACH(p, &peers, link)
-		(void)ink_connection_emit_signal(p->conn,
+		(void)link_connection_emit_signal(p->conn,
 				COND_PATH_OBJECT,
 				COND_INTERFACE,
 				"ConditionChanged",
@@ -798,31 +798,31 @@ int dbus_init(uev_ctx_t *ctx)
 {
 	dbg("Setting up D-Bus listening socket at %s ...", FINIT_BUS_SOCKET);
 
-	if (ink_server_new(&server, FINIT_BUS_SOCKET) < 0) {
+	if (link_server_new(&server, FINIT_BUS_SOCKET) < 0) {
 		err(1, "Failed binding D-Bus socket %s", FINIT_BUS_SOCKET);
 		return 1;
 	}
 
-	if (ink_server_add_object(server, "/org/finit/manager",
+	if (link_server_add_object(server, "/org/finit/manager",
 				  &manager_vtable, NULL) < 0) {
 		err(1, "Failed registering Manager1 object");
-		ink_server_free(server);
+		link_server_free(server);
 		server = NULL;
 		return 1;
 	}
 
-	if (ink_server_add_object(server, COND_PATH_OBJECT,
+	if (link_server_add_object(server, COND_PATH_OBJECT,
 				  &cond_vtable, NULL) < 0) {
 		err(1, "Failed registering Cond1 object");
-		ink_server_free(server);
+		link_server_free(server);
 		server = NULL;
 		return 1;
 	}
 
 	if (uev_io_init(ctx, &accept_watcher, accept_cb, NULL,
-			ink_server_get_fd(server), UEV_READ)) {
+			link_server_get_fd(server), UEV_READ)) {
 		err(1, "Failed registering D-Bus accept watcher");
-		ink_server_free(server);
+		link_server_free(server);
 		server = NULL;
 		return 1;
 	}
@@ -852,7 +852,7 @@ int dbus_exit(void)
 		peer_drop(p);
 
 	if (server) {
-		ink_server_free(server);
+		link_server_free(server);
 		server = NULL;
 	}
 

@@ -21,10 +21,10 @@ static void close_save_errno(int fd)
 	errno = saved;
 }
 
-int ink_server_new(ink_server_t **out, const char *path)
+int link_server_new(link_server_t **out, const char *path)
 {
 	struct sockaddr_un sun = { .sun_family = AF_UNIX };
-	ink_server_t *srv;
+	link_server_t *srv;
 	size_t plen;
 	int fd;
 
@@ -34,7 +34,7 @@ int ink_server_new(ink_server_t **out, const char *path)
 	}
 
 	plen = strlen(path);
-	if (plen >= sizeof(sun.sun_path) || plen >= INK_PATH_MAX) {
+	if (plen >= sizeof(sun.sun_path) || plen >= LINK_PATH_MAX) {
 		errno = ENAMETOOLONG;
 		return -1;
 	}
@@ -87,20 +87,20 @@ err_free:
 	return -1;
 }
 
-void ink_server_free(ink_server_t *srv)
+void link_server_free(link_server_t *srv)
 {
-	struct ink_object *o;
+	struct link_object *o;
 
 	if (!srv)
 		return;
 
 	o = TAILQ_FIRST(&srv->objects);
 	while (o) {
-		struct ink_object       *next_o = TAILQ_NEXT(o, link);
-		struct ink_vtable_entry *e      = TAILQ_FIRST(&o->vtables);
+		struct link_object       *next_o = TAILQ_NEXT(o, link);
+		struct link_vtable_entry *e      = TAILQ_FIRST(&o->vtables);
 
 		while (e) {
-			struct ink_vtable_entry *next_e = TAILQ_NEXT(e, link);
+			struct link_vtable_entry *next_e = TAILQ_NEXT(e, link);
 
 			free(e);
 			e = next_e;
@@ -116,7 +116,7 @@ void ink_server_free(ink_server_t *srv)
 	free(srv);
 }
 
-int ink_server_get_fd(const ink_server_t *srv)
+int link_server_get_fd(const link_server_t *srv)
 {
 	if (!srv)
 		return -1;
@@ -124,11 +124,11 @@ int ink_server_get_fd(const ink_server_t *srv)
 	return srv->fd;
 }
 
-int ink_server_accept(ink_server_t *srv, ink_connection_t **out)
+int link_server_accept(link_server_t *srv, link_connection_t **out)
 {
 	struct ucred cred = { 0 };
 	socklen_t credlen = sizeof(cred);
-	ink_connection_t *conn;
+	link_connection_t *conn;
 	int cfd;
 
 	if (!srv || !out) {
@@ -147,7 +147,7 @@ int ink_server_accept(ink_server_t *srv, ink_connection_t **out)
 	}
 
 	conn->fd     = cfd;
-	conn->auth   = INK_AUTH_NUL;
+	conn->auth   = LINK_AUTH_NUL;
 	conn->server = srv;
 
 	if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &cred, &credlen) == 0)
@@ -155,7 +155,7 @@ int ink_server_accept(ink_server_t *srv, ink_connection_t **out)
 	else
 		conn->peer_uid = (uid_t)-1;
 
-	ink__auth_generate_guid(conn->guid);
+	link__auth_generate_guid(conn->guid);
 
 	*out = conn;
 	return 0;

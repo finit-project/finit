@@ -19,7 +19,7 @@
 
 /* ---------- helpers ---------- */
 
-static int member_is(const struct ink_msg *m, const char *iface, const char *member)
+static int member_is(const struct link_msg *m, const char *iface, const char *member)
 {
 	if (!m->member || strcmp(m->member, member) != 0)
 		return 0;
@@ -28,25 +28,25 @@ static int member_is(const struct ink_msg *m, const char *iface, const char *mem
 	return 1;
 }
 
-static int send_string_reply(ink_connection_t *conn, const struct ink_msg *req,
+static int send_string_reply(link_connection_t *conn, const struct link_msg *req,
 			     const char *s)
 {
-	struct ink_writer w;
+	struct link_writer w;
 	ssize_t           blen;
 
-	ink__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
-	ink__w_string(&w, s);
-	blen = ink__w_finish(&w);
+	link__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
+	link__w_string(&w, s);
+	blen = link__w_finish(&w);
 	if (blen < 0) {
 		errno = EMSGSIZE;
 		return -1;
 	}
-	return ink__send_method_return(conn, req, "s", conn->txbuf, (size_t)blen);
+	return link__send_method_return(conn, req, "s", conn->txbuf, (size_t)blen);
 }
 
 /* ---------- Hello ---------- */
 
-static int handle_hello(ink_connection_t *conn, const struct ink_msg *m)
+static int handle_hello(link_connection_t *conn, const struct link_msg *m)
 {
 	if (!conn->unique_name[0]) {
 		uint32_t n = ++conn->server->next_unique_id;
@@ -59,12 +59,12 @@ static int handle_hello(ink_connection_t *conn, const struct ink_msg *m)
 
 /* ---------- Ping / GetMachineId ---------- */
 
-static int handle_ping(ink_connection_t *conn, const struct ink_msg *m)
+static int handle_ping(link_connection_t *conn, const struct link_msg *m)
 {
-	return ink__send_method_return(conn, m, NULL, NULL, 0);
+	return link__send_method_return(conn, m, NULL, NULL, 0);
 }
 
-static int handle_get_machine_id(ink_connection_t *conn, const struct ink_msg *m)
+static int handle_get_machine_id(link_connection_t *conn, const struct link_msg *m)
 {
 	/* D-Bus mandates a 32-char hex machine-id.  Use the per-server
 	 * GUID-style identifier we already generate for each connection,
@@ -74,7 +74,7 @@ static int handle_get_machine_id(ink_connection_t *conn, const struct ink_msg *m
 	static char machine_id[33];
 
 	if (!machine_id[0])
-		ink__auth_generate_guid(machine_id);
+		link__auth_generate_guid(machine_id);
 	return send_string_reply(conn, m, machine_id);
 }
 
@@ -105,7 +105,7 @@ static void xprintf(struct xbuf *x, const char *fmt, ...)
 }
 
 /* Emit a single <method> stanza for one method definition. */
-static void emit_method(struct xbuf *x, const ink_method_t *m)
+static void emit_method(struct xbuf *x, const link_method_t *m)
 {
 	const char *p;
 
@@ -166,11 +166,11 @@ static int child_segment(const char *parent, const char *child,
 	return 1;
 }
 
-static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
+static int handle_introspect(link_connection_t *conn, const struct link_msg *m)
 {
 	static char  xml[8192];	/* static keeps the stack small in PID 1 */
 	struct xbuf  x = { .buf = xml, .cap = sizeof(xml) };
-	struct ink_object *o;
+	struct link_object *o;
 	const char  *path = m->path;
 
 	xprintf(&x,
@@ -182,7 +182,7 @@ static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
 
 	o = NULL;
 	{
-		struct ink_object *p;
+		struct link_object *p;
 
 		TAILQ_FOREACH(p, &conn->server->objects, link) {
 			if (strcmp(p->path, path) == 0) {
@@ -193,8 +193,8 @@ static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
 	}
 
 	if (o) {
-		struct ink_vtable_entry *e;
-		const ink_method_t *meth;
+		struct link_vtable_entry *e;
+		const link_method_t *meth;
 
 		TAILQ_FOREACH(e, &o->vtables, link) {
 			xprintf(&x, "  <interface name=\"%s\">\n",
@@ -207,9 +207,9 @@ static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
 	}
 
 	{
-		struct ink_object *p;
-		char prev_seg[INK_PATH_MAX] = { 0 };
-		char seg     [INK_PATH_MAX];
+		struct link_object *p;
+		char prev_seg[LINK_PATH_MAX] = { 0 };
+		char seg     [LINK_PATH_MAX];
 
 		TAILQ_FOREACH(p, &conn->server->objects, link) {
 			if (!child_segment(path, p->path, seg, sizeof(seg)))
@@ -224,7 +224,7 @@ static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
 	xprintf(&x, "</node>\n");
 
 	if (x.err)
-		return ink__send_error(conn, m,
+		return link__send_error(conn, m,
 			"org.freedesktop.DBus.Error.Failed",
 			"Introspection XML overflow");
 
@@ -233,61 +233,61 @@ static int handle_introspect(ink_connection_t *conn, const struct ink_msg *m)
 
 /* ---------- AddMatch / RemoveMatch ---------- */
 
-static int handle_add_match(ink_connection_t *conn, const struct ink_msg *m)
+static int handle_add_match(link_connection_t *conn, const struct link_msg *m)
 {
 	const char *rule;
-	struct ink_reader r;
+	struct link_reader r;
 
 	if (!m->signature || strcmp(m->signature, "s") != 0)
-		return ink__send_error(conn, m,
+		return link__send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"AddMatch takes a single string");
 
-	ink__r_init(&r, m->body, m->body_avail);
-	if (ink__r_string(&r, &rule) < 0)
-		return ink__send_error(conn, m,
+	link__r_init(&r, m->body, m->body_avail);
+	if (link__r_string(&r, &rule) < 0)
+		return link__send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Malformed argument");
 
-	if (ink__match_add(conn, rule) < 0) {
+	if (link__match_add(conn, rule) < 0) {
 		if (errno == ENOSPC)
-			return ink__send_error(conn, m,
+			return link__send_error(conn, m,
 				"org.freedesktop.DBus.Error.LimitsExceeded",
 				"Too many active match rules");
-		return ink__send_error(conn, m,
+		return link__send_error(conn, m,
 			"org.freedesktop.DBus.Error.MatchRuleInvalid",
 			"Unrecognised key or malformed rule");
 	}
-	return ink__send_method_return(conn, m, NULL, NULL, 0);
+	return link__send_method_return(conn, m, NULL, NULL, 0);
 }
 
-static int handle_remove_match(ink_connection_t *conn, const struct ink_msg *m)
+static int handle_remove_match(link_connection_t *conn, const struct link_msg *m)
 {
 	const char *rule;
-	struct ink_reader r;
+	struct link_reader r;
 
 	if (!m->signature || strcmp(m->signature, "s") != 0)
-		return ink__send_error(conn, m,
+		return link__send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"RemoveMatch takes a single string");
 
-	ink__r_init(&r, m->body, m->body_avail);
-	if (ink__r_string(&r, &rule) < 0)
-		return ink__send_error(conn, m,
+	link__r_init(&r, m->body, m->body_avail);
+	if (link__r_string(&r, &rule) < 0)
+		return link__send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Malformed argument");
 
-	if (ink__match_remove(conn, rule) < 0)
-		return ink__send_error(conn, m,
+	if (link__match_remove(conn, rule) < 0)
+		return link__send_error(conn, m,
 			"org.freedesktop.DBus.Error.MatchRuleNotFound",
 			"No such match rule on this connection");
 
-	return ink__send_method_return(conn, m, NULL, NULL, 0);
+	return link__send_method_return(conn, m, NULL, NULL, 0);
 }
 
 /* ---------- entry point ---------- */
 
-int ink__handle_builtin(ink_connection_t *conn, const struct ink_msg *m)
+int link__handle_builtin(link_connection_t *conn, const struct link_msg *m)
 {
 	if (member_is(m, "org.freedesktop.DBus", "Hello") &&
 	    m->path && strcmp(m->path, "/org/freedesktop/DBus") == 0)
