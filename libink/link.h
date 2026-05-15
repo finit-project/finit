@@ -53,6 +53,29 @@ typedef struct link_writer {
 	size_t array_depth;
 } link_writer_t;
 
+/* Reader is exposed so callers can stack-allocate one for decoding
+ * reply or signal bodies received from a peer.  Treat fields as
+ * opaque; use link_reader_init + the link_r_* helpers. */
+typedef struct link_reader {
+	const uint8_t *base;
+	size_t         off;
+	size_t         cap;
+	int            err;	/* sticky */
+} link_reader_t;
+
+/* View of a method-call reply, populated by link_client_call(_v) and
+ * returned by link_client_reply().  All pointers reference internal
+ * client storage and are invalidated by the next call on the same
+ * client or by link_client_close().  `body` is NULL iff body_len==0;
+ * `error_name` is non-NULL only when `type == LINK_MSG_ERROR`. */
+typedef struct {
+	uint8_t        type;	/* LINK_MSG_METHOD_RETURN or _ERROR */
+	const char    *signature;
+	const char    *error_name;
+	const uint8_t *body;
+	size_t         body_len;
+} link_reply_t;
+
 /* ----------  server / connection lifecycle  ---------- */
 
 int   link_server_new   (link_server_t **server, const char *path);
@@ -156,7 +179,7 @@ int link_connection_emit_signal(link_connection_t *conn,
 link_client_t *link_client_open(const char *path);
 void           link_client_close(link_client_t *c);
 
-/* Status codes returned by link_client_call. */
+/* Status codes returned by link_client_call(_v). */
 #define LINK_CALL_OK     0   /* method-return received */
 #define LINK_CALL_ERROR  1   /* server replied with an error */
 #define LINK_CALL_FAIL  (-1) /* transport, parse, or invalid-arg failure */
@@ -168,15 +191,36 @@ void           link_client_close(link_client_t *c);
  * + link_writer_finish.  Pass signature=NULL and body=NULL for
  * methods that take no arguments.
  *
- * On LINK_CALL_ERROR the peer's org.* error name is copied into
- * err_buf (truncated if needed; pass NULL if you don't care). */
+ * After the call, inspect the reply via link_client_reply() -- it
+ * exposes the body bytes (for callers that want to decode them with
+ * link_reader_init + link_r_*) and the error name on LINK_CALL_ERROR.
+ * The reply view is invalidated by the next call on the same client
+ * or by link_client_close(). */
 int link_client_call(link_client_t *c,
 		     const char *obj_path,
 		     const char *interface,
 		     const char *member,
 		     const char *signature,
-		     const uint8_t *body, size_t body_len,
-		     char *err_buf, size_t err_buf_sz);
+		     const uint8_t *body, size_t body_len);
+
+/* Convenience wrapper that marshals the outgoing body from varargs
+ * matching `signature`.  Supported type codes (one per arg):
+ *   'y' -> int (promoted uint8_t)
+ *   'b' -> int (0/non-zero)
+ *   'u' -> uint32_t
+ *   's' -> const char *
+ *   'o' -> const char * (object path)
+ *
+ * Pass signature=NULL or "" for void calls.  Return value matches
+ * link_client_call; an unsupported type code returns LINK_CALL_FAIL
+ * with no message sent. */
+int link_client_call_v(link_client_t *c,
+		       const char *obj_path,
+		       const char *interface,
+		       const char *member,
+		       const char *signature, ...);
+
+const link_reply_t *link_client_reply(link_client_t *c);
 
 /* ----------  standalone writer  ----------
  *
@@ -198,6 +242,19 @@ void link_w_array_begin (link_writer_t *w, char element_sig);
 void link_w_array_end   (link_writer_t *w);
 void link_w_struct_begin(link_writer_t *w);
 void link_w_struct_end  (link_writer_t *w);
+
+/* ----------  standalone reader  ----------
+ *
+ * For decoding bodies received off the wire (reply or signal).
+ * Initialise on the body pointer + length, read via link_r_*,
+ * check link_r_done() to confirm everything was consumed. */
+void link_reader_init(link_reader_t *r, const uint8_t *body, size_t len);
+int  link_r_byte    (link_reader_t *r, uint8_t  *out);
+int  link_r_bool    (link_reader_t *r, int      *out);
+int  link_r_u32     (link_reader_t *r, uint32_t *out);
+int  link_r_string  (link_reader_t *r, const char **out);  /* "s" */
+int  link_r_path    (link_reader_t *r, const char **out);  /* "o" */
+int  link_r_done    (const link_reader_t *r);
 
 #ifdef __cplusplus
 }

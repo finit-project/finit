@@ -35,16 +35,8 @@ void __w_struct_end  (struct link_writer *w);
 /* ---- reader ----
  *
  * Reads from a message body pointer + length, advancing a cursor.
- * String pointers returned by __r_string reference the input
- * buffer and are valid for the lifetime of that buffer (i.e. for
- * the duration of the current call dispatch). */
-struct link_reader {
-	const uint8_t *base;
-	size_t         off;
-	size_t         cap;
-	int            err;	/* sticky */
-};
-
+ * struct link_reader is defined in link.h (public, opaque); the
+ * helpers here manipulate the fields directly. */
 void __r_init  (struct link_reader *r, const uint8_t *body, size_t len);
 int  __r_byte  (struct link_reader *r, uint8_t *out);
 int  __r_bool  (struct link_reader *r, int      *out);

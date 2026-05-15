@@ -303,6 +303,16 @@ void link_w_array_end   (link_writer_t *w)               { __w_array_end(w);    
 void link_w_struct_begin(link_writer_t *w)               { __w_struct_begin(w); }
 void link_w_struct_end  (link_writer_t *w)               { __w_struct_end(w);   }
 
+/* ----------  public reader wrappers  ---------- */
+
+void link_reader_init(link_reader_t *r, const uint8_t *body, size_t len) { __r_init(r, body, len); }
+int  link_r_byte  (link_reader_t *r, uint8_t  *o)     { return __r_byte  (r, o); }
+int  link_r_bool  (link_reader_t *r, int      *o)     { return __r_bool  (r, o); }
+int  link_r_u32   (link_reader_t *r, uint32_t *o)     { return __r_u32   (r, o); }
+int  link_r_string(link_reader_t *r, const char **o)  { return __r_string(r, o); }
+int  link_r_path  (link_reader_t *r, const char **o)  { return __r_path  (r, o); }
+int  link_r_done  (const link_reader_t *r)            { return __r_done  (r);    }
+
 /* ----------  dispatch entry point  ---------- */
 
 int __dispatch_message(link_connection_t *conn, const struct link_msg *m)

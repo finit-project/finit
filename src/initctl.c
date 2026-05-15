@@ -284,48 +284,45 @@ static int try_dbus_manager(const char *method, const char *arg_sig,
 			    const char *arg)
 {
 	link_client_t *c;
-	uint8_t        body[256];
-	link_writer_t  w;
-	ssize_t        body_len = 0;
-	char           err[128];
+	const char    *err;
 	int            rc;
 
 	c = link_client_open(FINIT_BUS_SOCKET);
 	if (!c)
 		return -1;
 
-	if (arg_sig && *arg_sig) {
-		link_writer_init(&w, body, sizeof(body));
-		if (!strcmp(arg_sig, "s"))
-			link_w_string(&w, arg ? arg : "");
-		else {
-			link_client_close(c);
-			return -1;
-		}
-		body_len = link_writer_finish(&w);
-		if (body_len < 0) {
-			link_client_close(c);
-			return -1;
-		}
-	}
-
-	err[0] = '\0';
-	rc = link_client_call(c, "/org/finit/manager", "org.finit.Manager1",
-			      method, arg_sig, body, (size_t)body_len,
-			      err, sizeof(err));
-	link_client_close(c);
+	/* "s" methods take the service identity (arg may be NULL ->
+	 * empty string); void methods pass no body. */
+	if (arg_sig && !strcmp(arg_sig, "s"))
+		rc = link_client_call_v(c, "/org/finit/manager",
+					"org.finit.Manager1", method,
+					"s", arg ? arg : "");
+	else if (!arg_sig || !*arg_sig)
+		rc = link_client_call_v(c, "/org/finit/manager",
+					"org.finit.Manager1", method, NULL);
+	else
+		rc = LINK_CALL_FAIL;
 
 	if (rc == LINK_CALL_ERROR) {
+		const link_reply_t *r = link_client_reply(c);
+
+		err = (r && r->error_name) ? r->error_name : "";
 		/* Exact match on the fully-qualified error name; substring
 		 * matching would misfire on a future name that contains
 		 * one of these as a substring. */
-		if (strcmp(err, "org.finit.Error.NoSuchService") == 0)
+		if (!strcmp(err, "org.finit.Error.NoSuchService")) {
+			link_client_close(c);
 			ERRX(noerr ? 0 : 69, "no such task or service(s): %s",
 			     arg ? arg : "");
-		if (strcmp(err, "org.freedesktop.DBus.Error.AccessDenied") == 0)
+		}
+		if (!strcmp(err, "org.freedesktop.DBus.Error.AccessDenied")) {
+			link_client_close(c);
 			ERRX(1, "permission denied: %s requires root", method);
-		ERRX(1, "%s: %s", method, err[0] ? err : "D-Bus error");
+		}
+		link_client_close(c);
+		ERRX(1, "%s: %s", method, *err ? err : "D-Bus error");
 	}
+	link_client_close(c);
 	if (rc == LINK_CALL_OK)
 		return 0;
 	return -1;	/* LINK_CALL_FAIL or anything else: fall back */
