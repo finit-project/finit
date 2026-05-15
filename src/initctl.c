@@ -268,19 +268,87 @@ static int do_startstop(int cmd, char *arg)
 	return do_svc(cmd, arg);
 }
 
-static int do_start  (char *arg) { return do_startstop(INIT_CMD_START_SVC,   arg); }
-static int do_stop   (char *arg) { return do_startstop(INIT_CMD_STOP_SVC,    arg); }
+#ifdef HAVE_DBUS
+#include "dbus-client.h"
+
+/* Try the D-Bus path for a Manager1 method.  Returns:
+ *    0  succeeded via D-Bus
+ *    1  D-Bus replied with an error -- callers should error out
+ *   -1  D-Bus not reachable -- callers should fall back to the
+ *       legacy INIT_SOCKET transport
+ *
+ * On D-Bus error replies the function maps the org.* error name to
+ * the same exit code initctl historically printed for that case
+ * (e.g. NoSuchService -> 69 with the legacy message). */
+static int try_dbus_manager(const char *method, const char *arg_sig,
+			    const char *arg)
+{
+	dbusc_t *c;
+	char     err[128];
+	int      rc;
+
+	c = dbusc_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	err[0] = '\0';
+	rc = dbusc_call(c, "/org/finit/manager", "org.finit.Manager1",
+			method, arg_sig, arg, 0, err, sizeof(err));
+	dbusc_close(c);
+
+	if (rc == 1) {
+		/* Exact match on the fully-qualified error name; substring
+		 * matching would misfire on a future name that contains
+		 * one of these as a substring. */
+		if (strcmp(err, "org.finit.Error.NoSuchService") == 0)
+			ERRX(noerr ? 0 : 69, "no such task or service(s): %s",
+			     arg ? arg : "");
+		if (strcmp(err, "org.freedesktop.DBus.Error.AccessDenied") == 0)
+			ERRX(1, "permission denied: %s requires root", method);
+		ERRX(1, "%s: %s", method, err[0] ? err : "D-Bus error");
+	}
+	return rc;
+}
+#endif /* HAVE_DBUS */
+
+static int do_start  (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = try_dbus_manager("Start", "s", arg);
+	if (rc >= 0) return rc;
+#endif
+	return do_startstop(INIT_CMD_START_SVC, arg);
+}
+
+static int do_stop   (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = try_dbus_manager("Stop", "s", arg);
+	if (rc >= 0) return rc;
+#endif
+	return do_startstop(INIT_CMD_STOP_SVC, arg);
+}
 
 static int do_reload (char *arg)
 {
-	if (!arg || !arg[0])
+	if (!arg || !arg[0]) {
+#ifdef HAVE_DBUS
+		int rc = try_dbus_manager("Reload", "", NULL);
+		if (rc >= 0) return rc;
+#endif
 		return do_svc(INIT_CMD_RELOAD, NULL);
+	}
 
 	return do_startstop(INIT_CMD_RELOAD_SVC, arg);
 }
 
 static int do_restart(char *arg)
 {
+#ifdef HAVE_DBUS
+	int rc = try_dbus_manager("Restart", "s", arg);
+	if (rc == 0) return 0;
+	if (rc == 1) ERRX(noerr ? 0 : 7, "failed restarting %s", arg);
+#endif
 	if (do_startstop(INIT_CMD_RESTART_SVC, arg))
 		ERRX(noerr ? 0 : 7, "failed restarting %s", arg);
 
@@ -643,9 +711,47 @@ static int do_cmd(int cmd)
 	return 0;
 }
 
-int do_reboot  (char *arg) { return do_cmd(INIT_CMD_REBOOT);   }
-int do_halt    (char *arg) { return do_cmd(INIT_CMD_HALT);     }
-int do_poweroff(char *arg) { return do_cmd(INIT_CMD_POWEROFF); }
+#ifdef HAVE_DBUS
+static int do_reboot_dbus(const char *method)
+{
+	int rc = try_dbus_manager(method, "", NULL);
+
+	if (rc == 0) {
+		sleep(5);	/* match legacy: wait for finit to shut down */
+		return 0;
+	}
+	return rc;	/* 1 = error, -1 = fall back */
+}
+#endif
+
+int do_reboot  (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = do_reboot_dbus("Reboot");
+	if (rc >= 0) return rc;
+#endif
+	return do_cmd(INIT_CMD_REBOOT);
+}
+
+int do_halt    (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = do_reboot_dbus("Halt");
+	if (rc >= 0) return rc;
+#endif
+	return do_cmd(INIT_CMD_HALT);
+}
+
+int do_poweroff(char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = do_reboot_dbus("Poweroff");
+	if (rc >= 0) return rc;
+#endif
+	return do_cmd(INIT_CMD_POWEROFF);
+}
+
+/* Suspend has no Manager1 equivalent yet; uses the legacy IPC. */
 int do_suspend (char *arg) { return do_cmd(INIT_CMD_SUSPEND);  }
 
 /**

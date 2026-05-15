@@ -108,6 +108,9 @@ initctl_SOURCES    = initctl.c initctl.h cgutil.c cgutil.h		\
 initctl_CFLAGS     = -W -Wall -Wextra -Wno-unused-parameter -std=gnu99
 initctl_CFLAGS    += $(lite_CFLAGS) $(uev_CFLAGS)
 initctl_LDADD      = $(lite_LIBS) $(uev_LIBS)
+if DBUS
+initctl_SOURCES   += dbus-client.c dbus-client.h
+endif
 
 INIT_LNKS          = init telinit
 REBOOT_LNKS        = reboot shutdown halt poweroff suspend
