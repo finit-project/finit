@@ -152,6 +152,11 @@ static int runlevel_get(int *prevlevel)
 	return rc;
 }
 
+#ifdef HAVE_DBUS
+static int try_dbus_manager(const char *method, const char *arg_sig,
+			    const char *arg);
+#endif
+
 static int toggle_debug(char *arg)
 {
 	struct init_request rq = {
@@ -159,6 +164,13 @@ static int toggle_debug(char *arg)
 		.cmd = INIT_CMD_DEBUG,
 	};
 
+	(void)arg;
+#ifdef HAVE_DBUS
+	{
+		int rc = try_dbus_manager("SetDebug", "", NULL);
+		if (rc >= 0) return rc;
+	}
+#endif
 	return client_send(&rq, sizeof(rq));
 }
 
@@ -356,20 +368,45 @@ static int do_startstop(int cmd, char *arg)
 
 #ifdef HAVE_DBUS
 
+/* Map a LINK_CALL_ERROR reply on `c` to the appropriate ERRX exit:
+ *    org.finit.Error.NoSuchService      -> exit 69 (legacy "no such svc")
+ *    org.freedesktop.DBus.Error.AccessDenied -> exit 1 (permission denied)
+ *    anything else                       -> exit 1 (method: err)
+ * `c` is closed before exit either way.  Use exact-match on the
+ * fully-qualified error name; a substring match would misfire on a
+ * future name that contained one of these as a prefix. */
+static void map_dbus_err(link_client_t *c, const char *method, const char *ident)
+{
+	const link_reply_t *r = link_client_reply(c);
+	char err[128];
+
+	/* The reply view points into c->rxbuf; copy the error name out
+	 * before link_client_close() frees the client.  Otherwise the
+	 * strcmps below read freed memory. */
+	if (r && r->error_name)
+		strlcpy(err, r->error_name, sizeof(err));
+	else
+		err[0] = '\0';
+	link_client_close(c);
+
+	if (!strcmp(err, "org.finit.Error.NoSuchService"))
+		ERRX(noerr ? 0 : 69, "no such task or service(s): %s",
+		     ident ? ident : "");
+	if (!strcmp(err, "org.freedesktop.DBus.Error.AccessDenied"))
+		ERRX(1, "permission denied: %s requires root", method);
+	ERRX(1, "%s: %s", method, *err ? err : "D-Bus error");
+}
+
 /* Try the D-Bus path for a Manager1 method.  Returns:
  *    0  succeeded via D-Bus
- *    1  D-Bus replied with an error -- callers should error out
  *   -1  D-Bus not reachable -- callers should fall back to the
  *       legacy INIT_SOCKET transport
- *
- * On D-Bus error replies the function maps the org.* error name to
- * the same exit code initctl historically printed for that case
- * (e.g. NoSuchService -> 69 with the legacy message). */
+ * LINK_CALL_ERROR is handled internally via map_dbus_err (does not
+ * return). */
 static int try_dbus_manager(const char *method, const char *arg_sig,
 			    const char *arg)
 {
 	link_client_t *c;
-	const char    *err;
 	int            rc;
 
 	c = link_client_open(FINIT_BUS_SOCKET);
@@ -388,29 +425,37 @@ static int try_dbus_manager(const char *method, const char *arg_sig,
 	else
 		rc = LINK_CALL_FAIL;
 
-	if (rc == LINK_CALL_ERROR) {
-		const link_reply_t *r = link_client_reply(c);
-
-		err = (r && r->error_name) ? r->error_name : "";
-		/* Exact match on the fully-qualified error name; substring
-		 * matching would misfire on a future name that contains
-		 * one of these as a substring. */
-		if (!strcmp(err, "org.finit.Error.NoSuchService")) {
-			link_client_close(c);
-			ERRX(noerr ? 0 : 69, "no such task or service(s): %s",
-			     arg ? arg : "");
-		}
-		if (!strcmp(err, "org.freedesktop.DBus.Error.AccessDenied")) {
-			link_client_close(c);
-			ERRX(1, "permission denied: %s requires root", method);
-		}
-		link_client_close(c);
-		ERRX(1, "%s: %s", method, *err ? err : "D-Bus error");
-	}
+	if (rc == LINK_CALL_ERROR)
+		map_dbus_err(c, method, arg);	/* exits */
 	link_client_close(c);
-	if (rc == LINK_CALL_OK)
-		return 0;
-	return -1;	/* LINK_CALL_FAIL or anything else: fall back */
+	return (rc == LINK_CALL_OK) ? 0 : -1;
+}
+
+/* Call a void-arg method on Service1 at /org/finit/service/<encoded>.
+ * Same return convention as try_dbus_manager. */
+static int try_dbus_service(const char *method, const char *ident)
+{
+	char path[256];
+	const char *prefix = "/org/finit/service/";
+	size_t plen = strlen(prefix);
+	link_client_t *c;
+	int rc;
+
+	if (!ident || !*ident)
+		return -1;
+	memcpy(path, prefix, plen);
+	if (link_path_encode(ident, path + plen, sizeof(path) - plen) < 0)
+		return -1;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	rc = link_client_call_v(c, path, "org.finit.Service1", method, NULL);
+	if (rc == LINK_CALL_ERROR)
+		map_dbus_err(c, method, ident);	/* exits */
+	link_client_close(c);
+	return (rc == LINK_CALL_OK) ? 0 : -1;
 }
 
 /* Try one Cond1.{Get,Set,Clear} call.  On COND_GET success the helper
@@ -570,6 +615,12 @@ static int do_reload (char *arg)
 		return do_svc(INIT_CMD_RELOAD, NULL);
 	}
 
+#ifdef HAVE_DBUS
+	{
+		int rc = try_dbus_service("Reload", arg);
+		if (rc >= 0) return rc;
+	}
+#endif
 	return do_startstop(INIT_CMD_RELOAD_SVC, arg);
 }
 
@@ -607,10 +658,6 @@ int do_signal(int argc, char *argv[])
 	if (argc != 2)
 		ERRX(2, "invalid number of arguments to signal");
 
-	strlcpy(rq.data, argv[0], sizeof(rq.data));
-	if (client_send(&rq, sizeof(rq)))
-		ERRX(noerr ? 0 : 69, "no such task or service(s): %s", argv[0]);
-
 	signo = str2sig(argv[1]);
 	if (signo == -1) {
 		const char *errstr = NULL;
@@ -619,6 +666,29 @@ int do_signal(int argc, char *argv[])
 		if (errstr)
 			ERRX(65, "%s signal: %s", errstr, argv[1]);
 	}
+
+#ifdef HAVE_DBUS
+	{
+		link_client_t *c = link_client_open(FINIT_BUS_SOCKET);
+
+		if (c) {
+			int rc = link_client_call_v(c, "/org/finit/manager",
+						    "org.finit.Manager1", "Signal",
+						    "su", argv[0], (uint32_t)signo);
+
+			if (rc == LINK_CALL_ERROR)
+				map_dbus_err(c, "Signal", argv[0]);	/* exits */
+			link_client_close(c);
+			if (rc == LINK_CALL_OK)
+				return 0;
+			/* LINK_CALL_FAIL: drop to legacy */
+		}
+	}
+#endif
+
+	strlcpy(rq.data, argv[0], sizeof(rq.data));
+	if (client_send(&rq, sizeof(rq)))
+		ERRX(noerr ? 0 : 69, "no such task or service(s): %s", argv[0]);
 
 	/* Reuse runlevel for signal number. */
 	rq.magic    = INIT_MAGIC;
@@ -1003,8 +1073,17 @@ int do_poweroff(char *arg)
 	return do_cmd(INIT_CMD_POWEROFF);
 }
 
-/* Suspend has no Manager1 equivalent yet; uses the legacy IPC. */
-int do_suspend (char *arg) { return do_cmd(INIT_CMD_SUSPEND);  }
+int do_suspend(char *arg)
+{
+	(void)arg;
+#ifdef HAVE_DBUS
+	{
+		int rc = try_dbus_manager("Suspend", "", NULL);
+		if (rc >= 0) return rc;
+	}
+#endif
+	return do_cmd(INIT_CMD_SUSPEND);
+}
 
 /**
  * do_switch_root - Switch to a new root filesystem (initramfs only)

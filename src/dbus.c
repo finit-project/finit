@@ -31,6 +31,7 @@
 #ifdef HAVE_DBUS
 
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -50,6 +51,7 @@
 #include "sig.h"
 #include "sm.h"
 #include "svc.h"
+#include "util.h"
 
 #define DBUS_MAX_PEERS 64
 
@@ -251,6 +253,7 @@ static int dbus_apply_restart(svc_t *svc, void *user_data)
 
 struct dispatch_ctx {
 	int (*action)(svc_t *, void *);
+	void *udata;
 	int   matched;
 };
 
@@ -259,7 +262,7 @@ static int dispatch_found(svc_t *svc, void *udata)
 	struct dispatch_ctx *ctx = udata;
 
 	ctx->matched++;
-	return ctx->action(svc, NULL);
+	return ctx->action(svc, ctx->udata);
 }
 
 static int dispatch_missing(char *job, char *id, void *udata)
@@ -268,14 +271,15 @@ static int dispatch_missing(char *job, char *id, void *udata)
 	return 0;	/* don't penalise the return; we'll check ->matched */
 }
 
-/* Apply `action` to every service matched by `ident`.  Returns 0 if
- * at least one service matched and the action succeeded on all;
- * -1 if no service matched the identity (caller sends NoSuchService). */
+/* Apply `action(svc, udata)` to every service matched by `ident`.
+ * Returns 0 if at least one service matched and the action succeeded
+ * on all; -1 if no service matched the identity (caller sends
+ * NoSuchService). */
 static int dispatch_action(const char *ident,
-			   int (*action)(svc_t *, void *))
+			   int (*action)(svc_t *, void *), void *udata)
 {
 	char buf[MAX_IDENT_LEN];
-	struct dispatch_ctx ctx = { .action = action };
+	struct dispatch_ctx ctx = { .action = action, .udata = udata };
 	int rc;
 
 	if (!ident || !*ident || strlen(ident) >= sizeof(buf))
@@ -292,14 +296,21 @@ static int manager_take_string_method(link_call_t *call,
 				      int (*action)(svc_t *, void *))
 {
 	const char *ident;
+	int rc;
 
 	if (link_call_read_string(call, &ident) < 0)
 		return link_call_reply_error(call,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"expected (s)");
-	if (dispatch_action(ident, action) != 0)
+
+	rc = dispatch_action(ident, action, NULL);
+	if (rc < 0)
 		return link_call_reply_error(call,
 			"org.finit.Error.NoSuchService", ident);
+	if (rc)
+		return link_call_reply_error(call,
+			"org.finit.Error.Failed",
+			"failed on matched service(s)");
 
 	(void)link_call_reply(call);	/* empty reply */
 	return 0;
@@ -361,6 +372,75 @@ static int dbus_shutdown(link_call_t *call, shutop_t target, int level)
 static int manager_reboot  (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_REBOOT, 6); }
 static int manager_poweroff(link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_OFF,    0); }
 static int manager_halt    (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_HALT,   0); }
+
+static int manager_set_debug(link_call_t *call, void *u)
+{
+	(void)u;
+	log_debug();
+	(void)link_call_reply(call);
+	return 0;
+}
+
+static int signal_one(svc_t *svc, void *udata)
+{
+	int signo = *(int *)udata;
+
+	/* Silently skip stopped services -- a multi-match ident
+	 * (e.g. "sshd:*") should not fail the whole call just because
+	 * one of the matches happens to be in a halted state. */
+	if (!svc_is_running(svc))
+		return 0;
+	return !!kill(svc->pid, signo);
+}
+
+static int manager_signal(link_call_t *call, void *u)
+{
+	const char *ident;
+	uint32_t signo;
+	int sig, rc;
+
+	(void)u;
+	if (link_call_read_string(call, &ident) < 0 ||
+	    link_call_read_u32   (call, &signo) < 0)
+		return link_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"expected (s, u)");
+	/* Match the upper bound `initctl signal` allows (1..31).  RT
+	 * signals are a future story; keep both sides in lockstep so
+	 * users see the same range regardless of transport. */
+	if (signo == 0 || signo > 31)
+		return link_call_reply_error(call,
+			"org.freedesktop.DBus.Error.InvalidArgs",
+			"signal out of range (1..31)");
+
+	sig = (int)signo;
+	rc = dispatch_action(ident, signal_one, &sig);
+	if (rc < 0)
+		return link_call_reply_error(call,
+			"org.finit.Error.NoSuchService", ident);
+	if (rc)
+		return link_call_reply_error(call,
+			"org.finit.Error.Failed",
+			"failed signalling matched service(s)");
+
+	(void)link_call_reply(call);
+	return 0;
+}
+
+static int manager_suspend(link_call_t *call, void *u)
+{
+	(void)u;
+	sync();
+	if (suspend() < 0) {
+		const char *msg = (errno == EINVAL)
+			? "Kernel does not support suspend to RAM"
+			: strerror(errno);
+		return link_call_reply_error(call,
+			"org.finit.Error.Failed", msg);
+	}
+	(void)link_call_reply(call);
+	return 0;
+}
 
 /* ---------- Manager1 properties ----------
  *
@@ -425,6 +505,12 @@ static const link_method_t manager_methods[] = {
 	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_poweroff },
 	{ .name = "Halt",         .in_sig = "",  .out_sig = "",
 	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_halt },
+	{ .name = "Suspend",      .in_sig = "",  .out_sig = "",
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_suspend },
+	{ .name = "SetDebug",     .in_sig = "",  .out_sig = "",
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_set_debug },
+	{ .name = "Signal",       .in_sig = "su", .out_sig = "",
+	  .flags = LINK_METHOD_PRIVILEGED, .handler = manager_signal },
 	{ NULL, NULL, NULL, 0, NULL }
 };
 

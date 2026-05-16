@@ -66,3 +66,31 @@ case "$(cat /tmp/dbus-initctl-cond.out)" in
     *)
         fail "initctl cond set didn't produce expected signal: $(cat /tmp/dbus-initctl-cond.out)" ;;
 esac
+
+# ---------- arc B: signal + reload <svc> routing ----------
+
+# initctl signal exits 0 iff the bus call succeeded.  We send SIGCONT
+# (no observable side-effect on a healthy daemon) so the test stays
+# benign regardless of how keventd handles it.
+say "initctl signal routes through Manager1.Signal"
+texec initctl signal keventd CONT >/dev/null \
+    || fail "initctl signal returned non-zero"
+assert "initctl signal ok" 0 -eq 0
+
+say "initctl signal on a bogus identity reports NoSuchService"
+set +e
+texec initctl signal no-such-svc-anywhere CONT >/tmp/dbus-sig-bad.out 2>&1
+sigbad_rc=$?
+set -e
+assert "Bogus signal target rejected (rc=$sigbad_rc)" "$sigbad_rc" -ne 0
+case "$(cat /tmp/dbus-sig-bad.out)" in
+    *"no such task or service"*)
+        assert "Error message mentions missing service" 0 -eq 0 ;;
+    *)
+        fail "Unexpected initctl signal output: $(cat /tmp/dbus-sig-bad.out)" ;;
+esac
+
+say "initctl reload <svc> routes through Service1.Reload"
+texec initctl reload keventd >/dev/null \
+    || fail "initctl reload keventd returned non-zero"
+assert "Per-service reload ok" 0 -eq 0
