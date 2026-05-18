@@ -174,6 +174,9 @@ AC_ARG_WITH(random-seed,
 AC_ARG_WITH(keventd,
         AS_HELP_STRING([--with-keventd], [Enable built-in keventd device manager, default: yes]),, [with_keventd=yes])
 
+AC_ARG_WITH(udev-rules,
+        AS_HELP_STRING([--without-udev-rules], [Skip install of curated udev rules under /lib/udev/rules.d, default: yes when keventd enabled]),, [with_udev_rules=yes])
+
 AC_ARG_WITH(sulogin,
         AS_HELP_STRING([--with-sulogin@<:@=USER@:>@], [Enable built-in sulogin, optional USER to request password for (default root), default: no.]),[sulogin=$withval],[with_sulogin=no])
 
@@ -356,6 +359,7 @@ AS_IF([test "x$with_plugin_path" != "xno"], [
 AM_CONDITIONAL(BASH,        [test "x$bash_dir"        != "xno"])
 AM_CONDITIONAL(STATIC,      [test "x$enable_static"    = "xyes"])
 AM_CONDITIONAL(KEVENTD,     [test "x$with_keventd"    != "xno"])
+AM_CONDITIONAL(UDEV_RULES,  [test "x$with_keventd"    != "xno" -a "x$with_udev_rules" != "xno"])
 AM_CONDITIONAL(SULOGIN,     [test "x$with_sulogin"    != "xno"])
 AM_CONDITIONAL(WATCHDOGD,   [test "x$with_watchdog"   != "xno"])
 AM_CONDITIONAL(LIBSYSTEMD,  [test "x$with_libsystemd" != "xno"])
