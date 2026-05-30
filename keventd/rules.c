@@ -1132,19 +1132,28 @@ static gid_t resolve_gid(const char *s)
  *
  * Stock udev rules invoke /lib/udev/<helper> (path_id, usb_id, blkid, ...)
  * via IMPORT{program}=.  keventd ships compatible builtins for many of
- * those.  If the helper is absent on this system, fall back to the
- * matching builtin so the rule still works.  If the helper exists, run
- * it as-is -- this lets users override our builtins by dropping a
- * custom helper into /lib/udev/.
+ * those.  Dispatch order:
  *
- * Returns 1 if the builtin handled the command, 0 if the caller should
- * proceed with the normal fork+exec path.
+ *   1. Absolute helper path that exists  -> let caller fork+exec it
+ *      (lets users override builtins by dropping a custom helper)
+ *   2. Basename matches a known builtin  -> run the builtin in-process
+ *   3. Absolute helper path that does NOT exist and has no matching
+ *      builtin                            -> skip silently with a debug
+ *      log; forking /bin/sh on a missing binary just yields a 127
+ *      child for every event (e.g. /lib/udev/fido_id, /lib/udev/scsi_id
+ *      on systems that don't ship them).
+ *   4. Anything else (relative command, shell snippet, ...) -> caller
+ *      forks /bin/sh -c which resolves via PATH.
+ *
+ * Returns 1 if the case has been handled here (caller skips fork),
+ * 0 if the caller should proceed with the normal fork+exec path.
  */
 static int try_builtin_fallback(const char *cmd, struct uevent *ev)
 {
 	char first[PATH_MAX], rebuilt[PATH_MAX];
 	const char *space, *base;
 	size_t len;
+	int    helper_missing;
 
 	space = strchr(cmd, ' ');
 	len = space ? (size_t)(space - cmd) : strlen(cmd);
@@ -1157,20 +1166,30 @@ static int try_builtin_fallback(const char *cmd, struct uevent *ev)
 	if (access(first, X_OK) == 0)
 		return 0;
 
+	helper_missing = (first[0] == '/');	/* absolute path that's not there */
+
 	base = strrchr(first, '/');
 	base = base ? base + 1 : first;
 
-	if (!builtin_has(base))
-		return 0;
+	if (builtin_has(base)) {
+		if (space)
+			snprintf(rebuilt, sizeof(rebuilt), "%s%s", base, space);
+		else
+			snprintf(rebuilt, sizeof(rebuilt), "%s", base);
 
-	if (space)
-		snprintf(rebuilt, sizeof(rebuilt), "%s%s", base, space);
-	else
-		snprintf(rebuilt, sizeof(rebuilt), "%s", base);
+		logit(LOG_DEBUG, "rules: %s not found, falling back to builtin %s",
+		      first, base);
+		builtin_run(ev, rebuilt);
+		return 1;
+	}
 
-	logit(LOG_DEBUG, "rules: %s not found, falling back to builtin %s", first, base);
-	builtin_run(ev, rebuilt);
-	return 1;
+	if (helper_missing) {
+		logit(LOG_DEBUG, "rules: %s not found and no matching builtin, skipping",
+		      first);
+		return 1;
+	}
+
+	return 0;
 }
 
 static void import_from_program(const char *cmd, struct uevent *ev)
