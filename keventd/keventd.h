@@ -149,6 +149,9 @@ int             devnode_add      (struct uevent *ev);
 int             devnode_del      (struct uevent *ev);
 int             netdev_add       (struct uevent *ev);
 
+void            class_cond       (const struct uevent *ev, int set);
+void            bind_cond        (const struct uevent *ev, int set);
+
 int             symlink_add      (struct uevent *ev);
 int             symlink_del      (struct uevent *ev);
 void            symlink_write_db (const char *devpath, FILE *fp);

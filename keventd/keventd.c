@@ -334,11 +334,17 @@ static void handle_uevent(char *buf, size_t len)
 
 			/* Create symlinks */
 			symlink_add(&ev);
+
+			/* class/<subsystem>/<sysname> -- covers sysfs-only
+			 * devices that don't get a /dev node. */
+			class_cond(&ev, 1);
 		}
 		break;
 
 	case ACT_REMOVE:
 		if (!passive) {
+			class_cond(&ev, 0);
+
 			/* Remove symlinks first */
 			symlink_del(&ev);
 
@@ -355,8 +361,13 @@ static void handle_uevent(char *buf, size_t len)
 		break;
 
 	case ACT_BIND:
+		if (!passive)
+			bind_cond(&ev, 1);
+		break;
+
 	case ACT_UNBIND:
-		/* Driver bind/unbind - could trigger conditions */
+		if (!passive)
+			bind_cond(&ev, 0);
 		break;
 
 	default:

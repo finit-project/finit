@@ -58,35 +58,77 @@
 void logit(int prio, const char *fmt, ...);
 
 /*
- * Set/clear a device condition by creating/removing a symlink.
+ * Set/clear a Finit condition by creating/removing a symlink.
  * keventd is a standalone daemon, so we manipulate the filesystem directly
  * rather than using Finit's internal cond_set()/cond_clear() API.
+ *
+ * prefix is the namespace path fragment (COND_DEV, COND_CLASS, COND_BIND,
+ * ...) ending in '/'.  rel is the relative path under that namespace
+ * (e.g. "sda", "input/event0", "net/eth0", "mt7530").
  */
-static void dev_cond(const char *devname, int set)
+static void cond_emit(const char *prefix, const char *rel, int set)
 {
 	char cond[PATH_MAX];
 	char *dir;
 
-	if (!devname)
+	if (!prefix || !rel || !*rel)
 		return;
 
-	snprintf(cond, sizeof(cond), "%s%s", _PATH_CONDDEV, devname);
+	snprintf(cond, sizeof(cond), "%s%s%s", _PATH_COND, prefix, rel);
 
-	/* Create parent directory if needed (e.g., dev/input/) */
+	/* mkpath is idempotent (EEXIST-tolerant) so just always call it. */
 	dir = strdupa(cond);
 	dir = dirname(dir);
-	if (strcmp(dir, _PATH_CONDDEV)) {
-		if (mkpath(dir, 0755) && errno != EEXIST)
-			logit(LOG_WARNING, "Failed creating condition dir %s", dir);
-	}
+	if (mkpath(dir, 0755) && errno != EEXIST)
+		logit(LOG_WARNING, "Failed creating condition dir %s", dir);
 
 	if (set) {
 		if (symlink(_PATH_RECONF, cond) && errno != EEXIST)
-			logit(LOG_WARNING, "Failed setting dev/%s condition", devname);
+			logit(LOG_WARNING, "Failed setting %s%s condition", prefix, rel);
 	} else {
 		if (erase(cond) && errno != ENOENT)
-			logit(LOG_WARNING, "Failed clearing dev/%s condition", devname);
+			logit(LOG_WARNING, "Failed clearing %s%s condition", prefix, rel);
 	}
+}
+
+static void dev_cond(const char *devname, int set)
+{
+	cond_emit(COND_DEV, devname, set);
+}
+
+/*
+ * class/<subsystem>/<sysname> -- fires for any sysfs class device add,
+ * regardless of whether the device gets a /dev node.  Lets services
+ * depend on sysfs-only hardware (DSA switch ports, LEDs, IIO sensors,
+ * PHYs, etc.).
+ */
+void class_cond(const struct uevent *ev, int set)
+{
+	const char *sysname;
+	char rel[256];
+
+	if (!ev->subsystem || !ev->devpath)
+		return;
+
+	sysname = strrchr(ev->devpath, '/');
+	sysname = sysname ? sysname + 1 : ev->devpath;
+	if (!*sysname)
+		return;
+
+	snprintf(rel, sizeof(rel), "%s/%s", ev->subsystem, sysname);
+	cond_emit(COND_CLASS, rel, set);
+}
+
+/*
+ * bind/<driver> -- fires on driver bind/unbind uevents.  Lets services
+ * depend on a specific driver becoming active (e.g. <bind/mt7530>) even
+ * when no class device or /dev node marks the moment.
+ */
+void bind_cond(const struct uevent *ev, int set)
+{
+	if (!ev->driver)
+		return;
+	cond_emit(COND_BIND, ev->driver, set);
 }
 
 /* Symlink tracking for cleanup on device removal */
