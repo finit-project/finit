@@ -1039,13 +1039,9 @@ fail:
  * Synchronous: waits for modprobe to complete before returning so
  * that rules running after `kmod load` (e.g. IMPORT{builtin}=blkid
  * once the filesystem driver is in) see the post-load state.
- * keventd's main loop uses SIGCHLD=SIG_IGN to auto-reap stray
- * children, so we temporarily restore the default handler here to
- * make waitpid() observable.
  */
 int modprobe_load(const char *modalias)
 {
-	struct sigaction sa_dfl, sa_old;
 	pid_t pid;
 	int   status = 0;
 
@@ -1054,15 +1050,9 @@ int modprobe_load(const char *modalias)
 
 	logit(LOG_DEBUG, "Loading module for %s", modalias);
 
-	sigemptyset(&sa_dfl.sa_mask);
-	sa_dfl.sa_flags   = 0;
-	sa_dfl.sa_handler = SIG_DFL;
-	sigaction(SIGCHLD, &sa_dfl, &sa_old);
-
 	pid = fork();
 	if (pid < 0) {
 		logit(LOG_ERR, "fork failed: %s", strerror(errno));
-		sigaction(SIGCHLD, &sa_old, NULL);
 		return -1;
 	}
 
@@ -1073,7 +1063,6 @@ int modprobe_load(const char *modalias)
 
 	while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
 		;
-	sigaction(SIGCHLD, &sa_old, NULL);
 
 	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
 		return -1;

@@ -782,13 +782,9 @@ static int pattern_match(const char *pat, const char *subject, pat_type_t type)
 
 /* ----- program execution ------------------------------------------------ */
 
-/*
- * Fork and exec cmd via /bin/sh, capture stdout into result.
- * Temporarily restores SIGCHLD (keventd uses SIG_IGN) so waitpid works.
- */
+/* Fork and exec cmd via /bin/sh, capture stdout into result. */
 static int run_program(const char *cmd, char *result, size_t rlen)
 {
-	struct sigaction sa_dfl, sa_old;
 	int pipefd[2];
 	pid_t pid;
 	int rc = -1;
@@ -799,14 +795,8 @@ static int run_program(const char *cmd, char *result, size_t rlen)
 	if (pipe(pipefd) < 0)
 		return -1;
 
-	sigemptyset(&sa_dfl.sa_mask);
-	sa_dfl.sa_flags   = 0;
-	sa_dfl.sa_handler = SIG_DFL;
-	sigaction(SIGCHLD, &sa_dfl, &sa_old);
-
 	pid = fork();
 	if (pid < 0) {
-		sigaction(SIGCHLD, &sa_old, NULL);
 		close(pipefd[0]);
 		close(pipefd[1]);
 		return -1;
@@ -838,7 +828,6 @@ static int run_program(const char *cmd, char *result, size_t rlen)
 			rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 	}
 
-	sigaction(SIGCHLD, &sa_old, NULL);
 	return rc;
 }
 
