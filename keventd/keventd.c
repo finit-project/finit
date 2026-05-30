@@ -38,7 +38,6 @@
 #include <errno.h>
 #include <dirent.h>
 #include <getopt.h>
-#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +49,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #include <linux/types.h>
 #include <linux/netlink.h>
@@ -59,6 +59,8 @@
 #else
 # include <lite/lite.h>
 #endif
+
+#include <uev/uev.h>
 
 #include "keventd.h"
 #include "rules.h"
@@ -76,14 +78,12 @@
 static int num_ac_online;
 static int num_ac;
 
-static int running = 1;
 static int level;
 static int logon;
 static int passive;		/* power-supply only, no device management */
 
 static struct rule_list rules = TAILQ_HEAD_INITIALIZER(rules);
 static char *rules_dir;			/* extra rules dir from -r option */
-static volatile sig_atomic_t reload_rules;
 
 int debug;			/* debug in other modules as well */
 
@@ -449,24 +449,79 @@ static void set_logging(int prio)
 	level = prio;
 }
 
-static void toggle_debug(int signo)
+static void sigusr1_cb(uev_t *w, void *arg, int events)
 {
-	(void)signo;
-
+	(void)w; (void)arg; (void)events;
 	debug ^= 1;
 	set_logging(debug ? LOG_DEBUG : LOG_NOTICE);
 }
 
-static void shut_down(int signo)
+static void sigterm_cb(uev_t *w, void *arg, int events)
 {
-	(void)signo;
-	running = 0;
+	(void)arg; (void)events;
+	uev_exit(w->ctx);
 }
 
-static void sighup_handler(int signo)
+static void sighup_cb(uev_t *w, void *arg, int events)
 {
-	(void)signo;
-	reload_rules = 1;
+	(void)w; (void)arg; (void)events;
+	rules_free(&rules);
+	rules_load_all(&rules, rules_dir);
+}
+
+static void sigchld_cb(uev_t *w, void *arg, int events)
+{
+	(void)w; (void)arg; (void)events;
+
+	/* Reap all the children. */
+	while (waitpid(-1, NULL, WNOHANG) > 0)
+		;
+}
+
+static void uevent_cb(uev_t *w, void *arg, int events)
+{
+	char *uevent_buf = arg;
+	char  rebc_buf[UEVENT_BUFFER_SIZE];
+	int   len;
+
+	if (events & UEV_ERROR) {
+		warn("netlink watcher error, re-arming");
+		uev_io_start(w);
+		return;
+	}
+
+	len = recv(w->fd, uevent_buf, UEVENT_BUFFER_SIZE - 1, MSG_DONTWAIT);
+	if (len == -1) {
+		switch (errno) {
+		case EINTR:
+		case EAGAIN:
+			return;
+		case ENOBUFS:
+			warn("lost events, buffer overflow");
+			return;
+		default:
+			panic("recv failed");
+		}
+	}
+	uevent_buf[len] = 0;
+
+	/* Skip libudev events (start with "libudev") */
+	if (!strncmp(uevent_buf, "libudev", 7))
+		return;
+
+	/*
+	 * Save raw buffer before handle_uevent() -- uevent_parse()
+	 * modifies the buffer in-place (splits @ and = separators).
+	 * Rebroadcast needs the original kernel format intact.
+	 */
+	if (rebc_fd != -1)
+		memcpy(rebc_buf, uevent_buf, len);
+
+	handle_uevent(uevent_buf, len);
+
+	/* Rebroadcast after processing so consumers see ready state. */
+	if (rebc_fd != -1)
+		rebc_event(rebc_buf, len);
 }
 
 static int usage(int rc)
@@ -503,12 +558,15 @@ static int usage(int rc)
  */
 int main(int argc, char *argv[])
 {
+	static char uevent_buf[UEVENT_BUFFER_SIZE];
 	unsigned int nlgroups = REBC_DEFAULT_NLGROUP;
 	struct sockaddr_nl nls = { 0 };
-	char buf[UEVENT_BUFFER_SIZE];
+	uev_t sigusr1_w, sigterm_w, sighup_w, sigchld_w;
+	uev_t netlink_w;
+	uev_ctx_t ctx;
 	int do_coldplug = 0;
 	int foreground = 0;
-	struct pollfd pfd;
+	int nlfd;
 	int c;
 
 	/* Device nodes are created with explicit MODE= from rules or the
@@ -558,10 +616,12 @@ int main(int argc, char *argv[])
 		set_logging(debug ? LOG_DEBUG : LOG_NOTICE);
 	}
 
-	signal(SIGUSR1, toggle_debug);
-	signal(SIGTERM, shut_down);
-	signal(SIGHUP,  sighup_handler);
-	signal(SIGCHLD, SIG_IGN);	/* Don't wait for modprobe children */
+	uev_init(&ctx);
+
+	uev_signal_init(&ctx, &sigusr1_w, sigusr1_cb, NULL, SIGUSR1);
+	uev_signal_init(&ctx, &sigterm_w, sigterm_cb, NULL, SIGTERM);
+	uev_signal_init(&ctx, &sighup_w,  sighup_cb,  NULL, SIGHUP);
+	uev_signal_init(&ctx, &sigchld_w, sigchld_cb, NULL, SIGCHLD);
 
 	/* Initialize condition directories */
 	init_power_supply();
@@ -573,22 +633,23 @@ int main(int argc, char *argv[])
 		disable_uevent_helper();
 
 	/* Set up netlink socket for kernel uevents */
-	pfd.events = POLLIN;
-	pfd.fd = socket(PF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_KOBJECT_UEVENT);
-	if (pfd.fd == -1)
+	nlfd = socket(PF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_KOBJECT_UEVENT);
+	if (nlfd == -1)
 		panic("failed creating netlink socket");
 
 	nls.nl_family = AF_NETLINK;
 	nls.nl_pid    = 0;
 	nls.nl_groups = 1;	/* Kernel uevents are on group 1 only */
-	if (bind(pfd.fd, (void *)&nls, sizeof(struct sockaddr_nl)))
+	if (bind(nlfd, (void *)&nls, sizeof(struct sockaddr_nl)))
 		panic("bind failed");
 
 	/* Increase receive buffer to reduce event loss */
 	{
 		int rcvbuf = 1024 * 1024;
-		setsockopt(pfd.fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+		setsockopt(nlfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 	}
+
+	uev_io_init(&ctx, &netlink_w, uevent_cb, uevent_buf, nlfd, UEV_READ);
 
 	/* Initialize rebroadcast socket (default on, -G to disable).
 	 * Skip in passive mode -- the hotplug daemon rebroadcasts. */
@@ -606,63 +667,11 @@ int main(int argc, char *argv[])
 	pidfile(NULL);
 	logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
 
-	while (running) {
-		char rebc_buf[UEVENT_BUFFER_SIZE];
-		int len;
-
-		/* Reload rules if SIGHUP was received */
-		if (reload_rules) {
-			reload_rules = 0;
-			rules_free(&rules);
-			rules_load_all(&rules, rules_dir);
-		}
-
-		if (-1 == poll(&pfd, 1, -1)) {
-			if (errno == EINTR)
-				continue;
-			break;
-		}
-
-		len = recv(pfd.fd, buf, sizeof(buf) - 1, MSG_DONTWAIT);
-		if (len == -1) {
-			switch (errno) {
-			case EINTR:
-				continue;
-			case ENOBUFS:
-				warn("lost events, buffer overflow");
-				continue;
-			default:
-				panic("recv failed");
-				continue;
-			}
-		}
-		buf[len] = 0;
-
-		/* Skip libudev events (start with "libudev") */
-		if (!strncmp(buf, "libudev", 7))
-			continue;
-
-		/*
-		 * Save raw buffer before handle_uevent() -- uevent_parse()
-		 * modifies the buffer in-place (splits @ and = separators).
-		 * Rebroadcast needs the original kernel format intact.
-		 */
-		if (rebc_fd != -1)
-			memcpy(rebc_buf, buf, len);
-
-		handle_uevent(buf, len);
-
-		/*
-		 * Rebroadcast after processing so that device nodes and
-		 * symlinks exist by the time consumers receive the event.
-		 */
-		if (rebc_fd != -1)
-			rebc_event(rebc_buf, len);
-	}
+	uev_run(&ctx, 0);
 
 	if (rebc_fd != -1)
 		close(rebc_fd);
-	close(pfd.fd);
+	close(nlfd);
 	rules_free(&rules);
 	logit(LOG_NOTICE, "keventd shutting down");
 

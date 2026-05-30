@@ -15,8 +15,10 @@ keventd_CFLAGS     = -W -Wall -Wextra -std=gnu99
 # handled via explicit checks where present.  Matches systemd-udev policy.
 keventd_CFLAGS    += -Wno-format-truncation
 keventd_CFLAGS    += $(lite_CFLAGS)
+keventd_CFLAGS    += $(uev_CFLAGS)
 keventd_CFLAGS    += $(blkid_CFLAGS)
 keventd_LDADD      = $(lite_LIBS)
+keventd_LDADD     += $(uev_LIBS)
 keventd_LDADD     += $(blkid_LIBS)
 
 # Curated udev rules derived from eudev 3.2.14 (GPL-2.0-or-later).
