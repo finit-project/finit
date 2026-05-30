@@ -252,7 +252,7 @@ battery:
 Usage
 -----
 
-    keventd [-cdGhnv] [-g GROUP]
+    keventd [-cdGhnSv] [-g GROUP] [-t SECONDS]
 
     Options:
       -c        Run coldplug at startup
@@ -261,11 +261,20 @@ Usage
       -G        Disable netlink rebroadcast entirely
       -h        Show help text
       -n        Run in foreground (no daemon)
+      -S        Settle mode: wait for kernel uevent queue to quiet, then exit
+      -t SEC    Settle timeout (default 30s, used with -S)
       -v        Show version
 
 In normal operation, Finit starts keventd automatically via its system
 configuration.  The `-d` flag is useful for debugging device issues --
 it runs keventd in the foreground and logs all received uevents.
+
+The `-S` flag offers a `udevadm settle`-equivalent for migration
+scenarios: it polls `/sys/kernel/uevent_seqnum` until no events have
+arrived for 200ms, then exits zero (or non-zero on timeout).  Prefer
+the condition-based model (`<dev/X>`, `<class/...>`, `<bind/...>`) over
+settle when you control the service definition -- settle is racy with
+slow probes that fire after the queue appears quiet.
 
 Debug logging can also be toggled at runtime by sending `SIGUSR1`:
 

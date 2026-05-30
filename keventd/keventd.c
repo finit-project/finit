@@ -44,6 +44,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <sys/socket.h>
@@ -535,10 +536,57 @@ static void uevent_cb(uev_t *w, void *arg, int events)
 		rebc_event(rebc_buf, len);
 }
 
+/*
+ * Stop-gap "settle" mode: poll /sys/kernel/uevent_seqnum until it has
+ * been stable for `stable_ms` (default 200ms), or until `timeout_s`
+ * elapses.  Imperfect -- a slow probe firing after we return still
+ * races -- but matches what typical `udevadm settle` users want.
+ *
+ * The proper fix lives in the IPC/queue work (see audit doc).
+ */
+static int cmd_settle(int timeout_s, int stable_ms)
+{
+	struct timespec start, last_change, now;
+	unsigned long long last_seq = 0, cur_seq = 0;
+	FILE *fp;
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	last_change = start;
+
+	while (1) {
+		fp = fopen("/sys/kernel/uevent_seqnum", "r");
+		if (!fp) {
+			fprintf(stderr, "keventd: cannot read uevent_seqnum: %s\n",
+				strerror(errno));
+			return 1;
+		}
+		if (fscanf(fp, "%llu", &cur_seq) != 1)
+			cur_seq = last_seq;
+		fclose(fp);
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+
+		if (cur_seq != last_seq) {
+			last_seq = cur_seq;
+			last_change = now;
+		} else {
+			long dt_ms = (now.tv_sec - last_change.tv_sec) * 1000 +
+				     (now.tv_nsec - last_change.tv_nsec) / 1000000;
+			if (dt_ms >= stable_ms)
+				return 0;
+		}
+
+		if (now.tv_sec - start.tv_sec >= timeout_s)
+			return 1;
+
+		usleep(50000);	/* 50ms */
+	}
+}
+
 static int usage(int rc)
 {
 	fprintf(stderr,
-		"Usage: keventd [-dGhnpv] [-c] [-g GROUP] [-r DIR]\n"
+		"Usage: keventd [-dGhnpSv] [-c] [-g GROUP] [-r DIR] [-t SECONDS]\n"
 		"\n"
 		"Options:\n"
 		"  -c        Run coldplug at startup\n"
@@ -549,6 +597,8 @@ static int usage(int rc)
 		"  -n        Run in foreground (no daemon)\n"
 		"  -p        Passive mode: power supply events only (no device management)\n"
 		"  -r DIR    Extra rules directory (in addition to standard udev paths)\n"
+		"  -S        Settle: wait until kernel uevent queue is quiet, then exit\n"
+		"  -t SEC    Settle timeout in seconds (default: 30, with -S)\n"
 		"  -v        Show version\n"
 		"\n", REBC_DEFAULT_NLGROUP);
 
@@ -576,6 +626,8 @@ int main(int argc, char *argv[])
 	uev_t netlink_w;
 	uev_ctx_t ctx;
 	int do_coldplug = 0;
+	int do_settle = 0;
+	int settle_timeout = 30;
 	int foreground = 0;
 	int nlfd;
 	int c;
@@ -585,7 +637,7 @@ int main(int argc, char *argv[])
 	 * requested bits verbatim instead of masking them. */
 	umask(0);
 
-	while ((c = getopt(argc, argv, "cdg:Ghnpr:v")) != -1) {
+	while ((c = getopt(argc, argv, "cdg:Ghnpr:St:v")) != -1) {
 		switch (c) {
 		case 'c':
 			do_coldplug = 1;
@@ -611,6 +663,12 @@ int main(int argc, char *argv[])
 		case 'r':
 			rules_dir = optarg;
 			break;
+		case 'S':
+			do_settle = 1;
+			break;
+		case 't':
+			settle_timeout = atoi(optarg);
+			break;
 		case 'v':
 			printf("keventd v%s\n", KEVENTD_VERSION);
 			return 0;
@@ -618,6 +676,9 @@ int main(int argc, char *argv[])
 			return usage(1);
 		}
 	}
+
+	if (do_settle)
+		return cmd_settle(settle_timeout, 200);
 
 	if (!foreground) {
 		openlog("keventd", LOG_PID, LOG_DAEMON);
