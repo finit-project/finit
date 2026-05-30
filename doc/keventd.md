@@ -125,6 +125,12 @@ kernel to re-emit add events for all existing devices.
 
 This replaces the separate `coldplug` script previously used with mdev.
 
+When `-c` is used, keventd defers its pidfile (and the `pid/keventd`
+condition Finit asserts from it) until the coldplug event queue has
+been fully drained.  Services that depend on `<pid/keventd>` can
+therefore assume `/dev` is populated and persistent symlinks are live,
+without needing a separate `settle` step.
+
 
 Netlink Rebroadcast
 -------------------

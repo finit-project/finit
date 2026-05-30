@@ -76,6 +76,13 @@
 /* Default netlink group for uevent rebroadcast (libudev-zero convention) */
 #define REBC_DEFAULT_NLGROUP 4
 
+/* Used by settle and coldplug at startup */
+struct coldplug_gate {
+	unsigned long long last_seq;
+	struct timespec    last_change;
+	int                primed;
+};
+
 static int num_ac_online;
 static int num_ac;
 
@@ -537,6 +544,55 @@ static void uevent_cb(uev_t *w, void *arg, int events)
 }
 
 /*
+ * Pidfile gate used with -c: defer pidfile() until the kernel's
+ * uevent_seqnum has been stable for 200ms, so that <pid/keventd>
+ * means "/dev is populated, persistent symlinks are live" rather
+ * than just "listening on netlink".
+ */
+static void coldplug_pidfile_cb(uev_t *w, void *arg, int events)
+{
+	struct coldplug_gate *cg = arg;
+	unsigned long long cur = 0;
+	struct timespec now;
+	FILE *fp;
+	long dt_ms;
+
+	(void)events;
+
+	fp = fopen("/sys/kernel/uevent_seqnum", "r");
+	if (!fp)
+		return;
+
+	if (fscanf(fp, "%llu", &cur) != 1)
+		cur = cg->last_seq;
+	fclose(fp);
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+
+	if (!cg->primed) {
+		cg->last_seq = cur;
+		cg->last_change = now;
+		cg->primed = 1;
+		return;
+	}
+
+	if (cur != cg->last_seq) {
+		cg->last_seq = cur;
+		cg->last_change = now;
+		return;
+	}
+
+	dt_ms = (now.tv_sec -  cg->last_change.tv_sec)  * 1000 +
+		(now.tv_nsec - cg->last_change.tv_nsec) / 1000000;
+	if (dt_ms < 200)
+		return;
+
+	pidfile(NULL);
+	logit(LOG_NOTICE, "keventd ready, coldplug queue drained");
+	uev_timer_stop(w);
+}
+
+/*
  * Stop-gap "settle" mode: poll /sys/kernel/uevent_seqnum until it has
  * been stable for `stable_ms` (default 200ms), or until `timeout_s`
  * elapses.  Imperfect -- a slow probe firing after we return still
@@ -546,14 +602,15 @@ static void uevent_cb(uev_t *w, void *arg, int events)
  */
 static int cmd_settle(int timeout_s, int stable_ms)
 {
-	struct timespec start, last_change, now;
 	unsigned long long last_seq = 0, cur_seq = 0;
-	FILE *fp;
+	struct timespec start, last_change, now;
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	last_change = start;
 
 	while (1) {
+		FILE *fp;
+
 		fp = fopen("/sys/kernel/uevent_seqnum", "r");
 		if (!fp) {
 			fprintf(stderr, "keventd: cannot read uevent_seqnum: %s\n",
@@ -579,7 +636,7 @@ static int cmd_settle(int timeout_s, int stable_ms)
 		if (now.tv_sec - start.tv_sec >= timeout_s)
 			return 1;
 
-		usleep(50000);	/* 50ms */
+		usleep(50000);
 	}
 }
 
@@ -619,16 +676,17 @@ static int usage(int rc)
  */
 int main(int argc, char *argv[])
 {
-	static char uevent_buf[UEVENT_BUFFER_SIZE];
+	uev_t netlink_watcher, sigusr1_watcher, sigterm_watcher, sighup_watcher, sigchld_watcher;
 	unsigned int nlgroups = REBC_DEFAULT_NLGROUP;
+	static char uevent_buf[UEVENT_BUFFER_SIZE];
+	static struct coldplug_gate cg;
 	struct sockaddr_nl nls = { 0 };
-	uev_t sigusr1_w, sigterm_w, sighup_w, sigchld_w;
-	uev_t netlink_w;
-	uev_ctx_t ctx;
-	int do_coldplug = 0;
-	int do_settle = 0;
+	static uev_t coldplug_timer;
 	int settle_timeout = 30;
+	int do_coldplug = 0;
 	int foreground = 0;
+	int do_settle = 0;
+	uev_ctx_t ctx;
 	int nlfd;
 	int c;
 
@@ -690,10 +748,10 @@ int main(int argc, char *argv[])
 
 	uev_init(&ctx);
 
-	uev_signal_init(&ctx, &sigusr1_w, sigusr1_cb, NULL, SIGUSR1);
-	uev_signal_init(&ctx, &sigterm_w, sigterm_cb, NULL, SIGTERM);
-	uev_signal_init(&ctx, &sighup_w,  sighup_cb,  NULL, SIGHUP);
-	uev_signal_init(&ctx, &sigchld_w, sigchld_cb, NULL, SIGCHLD);
+	uev_signal_init(&ctx, &sigusr1_watcher, sigusr1_cb, NULL, SIGUSR1);
+	uev_signal_init(&ctx, &sigterm_watcher, sigterm_cb, NULL, SIGTERM);
+	uev_signal_init(&ctx, &sighup_watcher,  sighup_cb,  NULL, SIGHUP);
+	uev_signal_init(&ctx, &sigchld_watcher, sigchld_cb, NULL, SIGCHLD);
 
 	/* Initialize condition directories */
 	init_power_supply();
@@ -721,7 +779,7 @@ int main(int argc, char *argv[])
 		setsockopt(nlfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 	}
 
-	uev_io_init(&ctx, &netlink_w, uevent_cb, uevent_buf, nlfd, UEV_READ);
+	uev_io_init(&ctx, &netlink_watcher, uevent_cb, uevent_buf, nlfd, UEV_READ);
 
 	/* Initialize rebroadcast socket (default on, -G to disable).
 	 * Skip in passive mode -- the hotplug daemon rebroadcasts. */
@@ -736,8 +794,19 @@ int main(int argc, char *argv[])
 	if (!passive)
 		rules_load_all(&rules, rules_dir);
 
-	pidfile(NULL);
-	logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
+	/*
+	 * With -c, defer pidfile until coldplug events have actually been
+	 * drained, so <pid/keventd> means "/dev populated", not just
+	 * "listening on netlink".  Without -c, nothing is queued, drop
+	 * the pidfile immediately as before.
+	 */
+	if (do_coldplug) {
+		uev_timer_init(&ctx, &coldplug_timer, coldplug_pidfile_cb, &cg, 100, 100);
+		logit(LOG_NOTICE, "keventd v%s started, draining coldplug queue...", KEVENTD_VERSION);
+	} else {
+		pidfile(NULL);
+		logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
+	}
 
 	uev_run(&ctx, 0);
 
