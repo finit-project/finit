@@ -255,8 +255,12 @@ wdstart()
 
 wdkill()
 {
+    [ -n "${wdpid:-}" ] || return 0
+
     say "Stopping test watchdog, pid $wdpid"
-    kill -KILL $wdpid
+    # Reap the sleep first, killing its subshell orphans it to PID 1.
+    pkill -KILL -P "$wdpid" 2>/dev/null || true
+    kill -KILL "$wdpid" 2>/dev/null || true
 }
 
 teardown()
