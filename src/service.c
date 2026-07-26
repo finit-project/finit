@@ -1654,7 +1654,8 @@ static void parse_script(svc_t *svc, char *type, char *script, int *tmo, char *b
 			     script, errstr);
 			goto err;
 		}
-		*tmo = (int)(sec * 1000);
+		if (tmo)
+			*tmo = (int)(sec * 1000);
 	} else {
 		path = script;
 		if (tmo)
