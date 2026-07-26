@@ -309,6 +309,18 @@ trap teardown EXIT
 SYSROOT="${SYSROOT:-$(pwd)/${TEST_DIR}/sysroot}"
 export SYSROOT
 
+# 'make check' refreshes the sysroot through the setup-chroot rule, but
+# running a test script by hand does not, and then the test silently
+# exercises whatever finit was installed last.  Compare and refuse.
+top_builddir="${top_builddir:-$TEST_DIR/..}"
+sysroot_finit="$SYSROOT/sbin/finit"
+built_finit="$top_builddir/src/finit"
+[ -x "$top_builddir/src/.libs/finit" ] && built_finit="$top_builddir/src/.libs/finit"
+
+if [ -x "$built_finit" ] && [ -e "$sysroot_finit" ] && ! cmp -s "$built_finit" "$sysroot_finit"; then
+	fail "Stale $sysroot_finit, run 'make -C test setup-chroot' or use 'make check'"
+fi
+
 TEST_TIMEOUT=300
 
 # shellcheck source=/dev/null
