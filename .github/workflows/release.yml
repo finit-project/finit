@@ -14,7 +14,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Installing dependencies ...
         run: |
           sudo apt-get -y update
@@ -69,7 +69,7 @@ jobs:
           mv ../*.tar.* artifacts/
       - name: Upload Test Results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: finit-release-test-logs
           path: finit-*/_build/sub/test/*.log

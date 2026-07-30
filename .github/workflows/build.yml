@@ -42,7 +42,7 @@ jobs:
           (cd libuev-2.4.1 && ./configure && make -j9 && sudo make install-strip)
           (cd libite-2.6.2 && ./configure && make -j9 && sudo make install-strip)
           sudo ldconfig
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Static Finit
         run: |
           ./autogen.sh
@@ -80,7 +80,7 @@ jobs:
           make -j1 check || (cat test/test-suite.log; false)
       - name: Upload Test Results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: finit-test-${{ matrix.compiler }}
           path: test/*.log

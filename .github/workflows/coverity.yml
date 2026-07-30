@@ -19,7 +19,7 @@ jobs:
   coverity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch latest Coverity Scan MD5
         id: var
         env:
@@ -29,7 +29,7 @@ jobs:
                --post-data "token=$TOKEN&project=${COVERITY_PROJ}&md5=1" \
                -O coverity-latest.tar.gz.md5
           echo "md5=$(cat coverity-latest.tar.gz.md5)" | tee -a $GITHUB_OUTPUT
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: cache
         with:
           path: coverity-latest.tar.gz
@@ -86,7 +86,7 @@ jobs:
             --form description="${PROJECT_NAME} $(git rev-parse HEAD)" \
             https://scan.coverity.com/builds?project=${COVERITY_PROJ}
       - name: Upload build.log
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverity-build.log
           path: cov-int/build-log.txt
