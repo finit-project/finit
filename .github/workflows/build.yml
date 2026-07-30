@@ -1,12 +1,13 @@
 name: Bob the Builder
 
-# Run on all branches, including all pull requests, except the 'dev'
-# branch since that's where we run Coverity Scan (limited tokens/day)
+# Run on push to release branches (master and maintenance N.x), and
+# on all pull requests.  The 'dev' branch is where we run Coverity
+# Scan (limited tokens/day)
 on:
   push:
     branches:
-      - '**'
-      - '!dev'
+      - master
+      - '[0-9]+.x'
   pull_request:
     types: [opened, synchronize, reopened, labeled]
 
@@ -22,8 +23,6 @@ jobs:
     # Verify we can build on latest Ubuntu with both gcc and clang
     name: ${{ matrix.compiler }}
     runs-on: ubuntu-latest
-    # Skip redundant builds for PRs - prefer PR builds over push builds
-    if: github.event_name != 'push' || github.ref == 'refs/heads/master'
     strategy:
       matrix:
         compiler: [gcc, clang]

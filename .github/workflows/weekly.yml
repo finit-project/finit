@@ -14,22 +14,31 @@ jobs:
   schedule:
     runs-on: ubuntu-latest
     outputs:
-      run: ${{ steps.schedule.outputs.run }}
+      branches: ${{ steps.schedule.outputs.branches }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check for any commits since last week
+        with:
+          fetch-depth: 0
+      - name: Check for branches with no commits since last week
         id: schedule
         run: |
-          commits="$(git log --format=%H --since='1 week ago')"
-          if [ -z "$commits" ]; then
-              echo "run=true"  >> $GITHUB_OUTPUT
-          else
-              echo "run=false" >> $GITHUB_OUTPUT
-          fi
+          branches=
+          maint=$(git branch -r --format='%(refname:lstrip=3)' | grep -E '^[0-9]+\.x$')
+          for branch in master $maint; do
+              commits="$(git log --format=%H --since='1 week ago' origin/$branch)"
+              if [ -z "$commits" ]; then
+                  branches="$branches\"$branch\","
+              fi
+          done
+          echo "branches=[${branches%,}]" >> $GITHUB_OUTPUT
   distcheck:
     needs: schedule
-    if: ${{ needs.schedule.outputs.run == 'true' }}
+    if: ${{ needs.schedule.outputs.branches != '[]' }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        branch: ${{ fromJSON(needs.schedule.outputs.branches) }}
+      fail-fast: false
     steps:
       - name: Install dependencies
         run: |
@@ -43,6 +52,8 @@ jobs:
           (cd libite-2.6.2 && ./configure && make -j9 && sudo make install-strip)
           sudo ldconfig
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
       - name: Base run
         run: |
           ./autogen.sh
@@ -63,5 +74,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: finit-weekly-test-logs
+          name: finit-weekly-test-logs-${{ matrix.branch }}
           path: finit-*/_build/sub/test/*.log

@@ -31,12 +31,17 @@ jobs:
         run: |
           ver=${GITHUB_REF#refs/tags/}
           echo "ver=${ver}" >> $GITHUB_OUTPUT
-          if echo $ver | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-alpha|-beta|-rc)[0-9]*$'; then
+          stable='[0-9]+\.[0-9]+(\.[0-9]+)?'
+          if echo $ver | grep -qE "^${stable}(-alpha|-beta|-rc)[0-9]*$"; then
             echo "pre=true"  >> $GITHUB_OUTPUT
           else
             echo "pre=false" >> $GITHUB_OUTPUT
           fi
-          if echo $ver | grep -qE '^[0-9.]+\.[0-9.]+(\.[0-9]+)?$'; then
+          # Mark as latest release only if this is the highest stable
+          # tag, so a 4.x maintenance release doesn't outrank 5.x
+          newest=$(git ls-remote --tags --refs origin | awk -F/ '{print $NF}' \
+                       | grep -E "^${stable}$" | sort -V | tail -1)
+          if [ "$ver" = "$newest" ]; then
             echo "latest=true"  >> $GITHUB_OUTPUT
           else
             echo "latest=false" >> $GITHUB_OUTPUT
