@@ -77,6 +77,7 @@ EXTRA_DIST		+= dbus-manager.sh
 EXTRA_DIST		+= dbus-service.sh
 EXTRA_DIST		+= dbus-cond.sh
 EXTRA_DIST		+= dbus-initctl.sh
+EXTRA_DIST		+= dbus-introspect.sh
 
 AM_TESTS_ENVIRONMENT	 = SYSROOT='$(abs_builddir)/sysroot/';
 AM_TESTS_ENVIRONMENT	+= export SYSROOT;
@@ -139,6 +140,7 @@ TESTS			+= dbus-manager.sh
 TESTS			+= dbus-service.sh
 TESTS			+= dbus-cond.sh
 TESTS			+= dbus-initctl.sh
+TESTS			+= dbus-introspect.sh
 endif
 
 check-recursive: setup-chroot
