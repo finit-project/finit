@@ -333,6 +333,7 @@ static int handle_properties_get(link_connection_t *conn, const struct link_msg 
 		if (!p->getter)
 			break;
 		__w_init(&w, conn->txbuf, sizeof(conn->txbuf));
+		__w_sig(&w, p->sig ? p->sig : "s");
 		if (p->getter(&w, e->userdata) != 0 || (blen = __w_finish(&w)) < 0)
 			return __send_error(conn, m,
 				"org.freedesktop.DBus.Error.Failed",
@@ -380,6 +381,7 @@ static int handle_properties_get_all(link_connection_t *conn, const struct link_
 				continue;
 			__w_struct_begin(&w);
 			__w_string(&w, p->name);
+			__w_sig(&w, p->sig ? p->sig : "s");
 			if (p->getter(&w, e->userdata) != 0)
 				return __send_error(conn, m,
 					"org.freedesktop.DBus.Error.Failed",

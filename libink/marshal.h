@@ -44,7 +44,9 @@ int  __r_bool  (struct link_reader *r, int      *out);
 int  __r_u32   (struct link_reader *r, uint32_t *out);
 int  __r_string(struct link_reader *r, const char **out);  /* "s" */
 int  __r_path  (struct link_reader *r, const char **out);  /* "o" */
+int  __r_variant_begin (struct link_reader *r, char *type);       /* sig header, cursor at value */
 int  __r_variant_string(struct link_reader *r, const char **out); /* "v" containing "s" */
+int  __r_variant_u32   (struct link_reader *r, uint32_t *out);    /* "v" containing "u" */
 int  __r_align (struct link_reader *r, size_t n);  /* skip to n-byte boundary */
 int  __r_array_begin(struct link_reader *r, size_t *out_end);
 int  __r_done  (const struct link_reader *r);

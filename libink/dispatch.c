@@ -312,6 +312,7 @@ int  link_r_bool  (link_reader_t *r, int      *o)     { return __r_bool  (r, o);
 int  link_r_u32   (link_reader_t *r, uint32_t *o)     { return __r_u32   (r, o); }
 int  link_r_string(link_reader_t *r, const char **o)  { return __r_string(r, o); }
 int  link_r_path  (link_reader_t *r, const char **o)  { return __r_path  (r, o); }
+int  link_r_variant_begin (link_reader_t *r, char *type)     { return __r_variant_begin(r, type); }
 int  link_r_variant_string(link_reader_t *r, const char **o) { return __r_variant_string(r, o); }
 int  link_r_align (link_reader_t *r, size_t n)        { return __r_align (r, n); }
 int  link_r_array_begin(link_reader_t *r, size_t *e)  { return __r_array_begin(r, e); }

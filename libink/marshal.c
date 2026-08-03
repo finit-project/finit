@@ -110,6 +110,7 @@ void __w_variant_string(struct link_writer *w, const char *s)
 	__w_string(w, s);
 }
 
+
 static size_t element_align(char c)
 {
 	switch (c) {
@@ -262,32 +263,61 @@ static int read_string_like(struct link_reader *r, const char **out)
 int __r_string(struct link_reader *r, const char **out) { return read_string_like(r, out); }
 int __r_path  (struct link_reader *r, const char **out) { return read_string_like(r, out); }
 
+/*
+ * Parse a variant's signature header, i.e. "g" wire form: 1-byte
+ * length, bytes, NUL.  Only single-character inner signatures are
+ * supported.  On success the cursor sits at the value and the type
+ * code is returned in *type.
+ */
+int __r_variant_begin(struct link_reader *r, char *type)
+{
+	uint8_t sig_len;
+
+	if (r_skip_align(r, 1) < 0 || r->off + 1 > r->cap)
+		goto fail;
+	sig_len = r->base[r->off++];
+	if (sig_len != 1 || r->off + 2 > r->cap)
+		goto fail;
+	if (r->base[r->off + 1] != 0)
+		goto fail;
+	*type = (char)r->base[r->off];
+	r->off += 2;
+	return 0;
+fail:
+	r->err = 1;
+	return -1;
+}
+
 /* Read a variant "v" expected to contain a string.  Fails if the
  * inner signature is anything other than "s" (returns -1, *out set
  * to NULL). */
 int __r_variant_string(struct link_reader *r, const char **out)
 {
-	uint8_t  sig_len;
-	uint32_t slen;
+	char type;
 
 	*out = NULL;
-
-	/* signature is "g" wire form: 1-byte length, bytes, NUL */
-	if (r_skip_align(r, 1) < 0 || r->off + 1 > r->cap) { r->err = 1; return -1; }
-	sig_len = r->base[r->off++];
-	if (sig_len != 1 || r->off + 2 > r->cap) { r->err = 1; return -1; }
-	if (r->base[r->off] != 's' || r->base[r->off + 1] != 0) { r->err = 1; return -1; }
-	r->off += 2;
-
-	/* now a normal string */
-	if (__r_u32(r, &slen) < 0) return -1;
-	if (r->off + (size_t)slen + 1 > r->cap || r->base[r->off + slen] != 0) {
+	if (__r_variant_begin(r, &type) < 0)
+		return -1;
+	if (type != 's') {
 		r->err = 1;
 		return -1;
 	}
-	*out = (const char *)(r->base + r->off);
-	r->off += (size_t)slen + 1;
-	return 0;
+	return read_string_like(r, out);
+}
+
+/* Read a variant "v" expected to contain a uint32. */
+int __r_variant_u32(struct link_reader *r, uint32_t *out)
+{
+	char type;
+
+	if (__r_variant_begin(r, &type) < 0)
+		return -1;
+	if (type != 'u') {
+		r->err = 1;
+		return -1;
+	}
+
+	return __r_u32(r, out);
 }
 
 int __r_done(const struct link_reader *r)

@@ -129,9 +129,11 @@ typedef struct {
 } link_method_t;
 
 /* A read-only property descriptor.  Set via the Properties.Set side
- * is not yet implemented; only Get and GetAll are.  The getter writes
- * the property's value as a D-Bus variant (use link_w_variant_string
- * for "s"-typed properties) into the provided writer. */
+ * is not yet implemented; only Get and GetAll are.  The framework
+ * emits the variant signature from `sig`; the getter writes only the
+ * bare value into the provided writer (link_w_string for "s",
+ * link_w_u32 for "u", ...), so the declared type is the single
+ * source of truth. */
 typedef int (*link_property_getter_fn)(link_writer_t *w, void *userdata);
 
 typedef struct {
@@ -329,6 +331,7 @@ int    link_r_bool    (link_reader_t *r, int      *out);
 int    link_r_u32     (link_reader_t *r, uint32_t *out);
 int    link_r_string  (link_reader_t *r, const char **out);  /* "s" */
 int    link_r_path    (link_reader_t *r, const char **out);  /* "o" */
+int    link_r_variant_begin (link_reader_t *r, char *type);       /* sig header, cursor at value */
 int    link_r_variant_string(link_reader_t *r, const char **out); /* "v" containing "s" */
 int    link_r_align   (link_reader_t *r, size_t n);  /* skip to next n-byte boundary */
 int    link_r_done    (const link_reader_t *r);

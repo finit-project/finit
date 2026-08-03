@@ -465,7 +465,7 @@ static int prop_runlevel(link_writer_t *w, void *u)
 
 	(void)u;
 	snprintf(buf, sizeof(buf), "%d", runlevel);
-	link_w_variant_string(w, buf);
+	link_w_string(w, buf);
 	return 0;
 }
 
@@ -475,14 +475,14 @@ static int prop_prevrunlevel(link_writer_t *w, void *u)
 
 	(void)u;
 	snprintf(buf, sizeof(buf), "%d", prevlevel);
-	link_w_variant_string(w, buf);
+	link_w_string(w, buf);
 	return 0;
 }
 
 static int prop_version(link_writer_t *w, void *u)
 {
 	(void)u;
-	link_w_variant_string(w, PACKAGE_VERSION);
+	link_w_string(w, PACKAGE_VERSION);
 	return 0;
 }
 
@@ -585,9 +585,81 @@ static const link_method_t service_methods[] = {
 	{ NULL, NULL, NULL, 0, NULL }
 };
 
+/*
+ * Getters write the bare value; the framework emits the variant
+ * signature from the table below.  `State` deliberately uses the
+ * initctl status vocabulary from svc_status(), not the coarser
+ * ServiceStateChanged strings -- a client that only tracks edges
+ * has the signal, a client that asks gets the full story.
+ */
+static int svc_prop_identity(link_writer_t *w, void *arg)
+{
+	link_w_string(w, svc_ident(arg, NULL, 0));
+	return 0;
+}
+
+static int svc_prop_name(link_writer_t *w, void *arg)
+{
+	link_w_string(w, ((svc_t *)arg)->name);
+	return 0;
+}
+
+static int svc_prop_state(link_writer_t *w, void *arg)
+{
+	link_w_string(w, svc_status(arg));
+	return 0;
+}
+
+static int svc_prop_desc(link_writer_t *w, void *arg)
+{
+	link_w_string(w, ((svc_t *)arg)->desc);
+	return 0;
+}
+
+static int svc_prop_command(link_writer_t *w, void *arg)
+{
+	link_w_string(w, ((svc_t *)arg)->cmd);
+	return 0;
+}
+
+static int svc_prop_conditions(link_writer_t *w, void *arg)
+{
+	link_w_string(w, ((svc_t *)arg)->cond);
+	return 0;
+}
+
+static int svc_prop_pid(link_writer_t *w, void *arg)
+{
+	svc_t *svc = arg;
+
+	link_w_u32(w, svc->pid > 0 ? (uint32_t)svc->pid : 0);
+	return 0;
+}
+
+static int svc_prop_restarts(link_writer_t *w, void *arg)
+{
+	svc_t *svc = arg;
+
+	link_w_u32(w, svc->restart_cnt > 0 ? (uint32_t)svc->restart_cnt : 0);
+	return 0;
+}
+
+static const link_property_t service_properties[] = {
+	{ .name = "Identity",     .sig = "s", .getter = svc_prop_identity   },
+	{ .name = "Name",         .sig = "s", .getter = svc_prop_name       },
+	{ .name = "State",        .sig = "s", .getter = svc_prop_state      },
+	{ .name = "Pid",          .sig = "u", .getter = svc_prop_pid        },
+	{ .name = "RestartCount", .sig = "u", .getter = svc_prop_restarts   },
+	{ .name = "Description",  .sig = "s", .getter = svc_prop_desc       },
+	{ .name = "Command",      .sig = "s", .getter = svc_prop_command    },
+	{ .name = "Conditions",   .sig = "s", .getter = svc_prop_conditions },
+	{ NULL, NULL, NULL }
+};
+
 static const link_vtable_t service_vtable = {
-	.interface = "org.finit.Service1",
-	.methods   = service_methods,
+	.interface  = "org.finit.Service1",
+	.methods    = service_methods,
+	.properties = service_properties,
 };
 
 /* Build the canonical object path for a service.  Identity is
@@ -702,6 +774,7 @@ void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
 	uint8_t      body[256];
 	link_writer_t w;
 	char         ident[MAX_IDENT_LEN];
+	char         path[FINIT_SVC_PATH_MAX];
 	ssize_t      blen;
 
 	if (!svc)
@@ -721,6 +794,35 @@ void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
 
 	dbus_emit_signal("/org/finit/manager", "org.finit.Manager1",
 			 "ServiceStateChanged", "sss", body, (size_t)blen);
+
+	/*
+	 * Dual emission: Properties-aware clients track one object via
+	 * the standard PropertiesChanged instead of filtering the
+	 * manager-wide signal.  Volatile numerics are invalidated, not
+	 * marshalled -- interested clients re-Get.
+	 */
+	if (service_path_for(svc, path, sizeof(path)) < 0)
+		return;
+
+	link_writer_init(&w, body, sizeof(body));
+	link_w_string(&w, "org.finit.Service1");
+	link_w_array_begin(&w, '{');
+	link_w_struct_begin(&w);
+	link_w_string(&w, "State");
+	link_w_variant_string(&w, svc_status(svc));
+	link_w_struct_end(&w);
+	link_w_array_end(&w);
+	link_w_array_begin(&w, 's');
+	link_w_string(&w, "Pid");
+	link_w_string(&w, "RestartCount");
+	link_w_array_end(&w);
+	blen = link_writer_finish(&w);
+	if (blen < 0)
+		return;
+
+	dbus_emit_signal(path, "org.freedesktop.DBus.Properties",
+			 "PropertiesChanged", "sa{sv}as",
+			 body, (size_t)blen);
 }
 
 /* ---------- signal emission: RunlevelChanged ----------
