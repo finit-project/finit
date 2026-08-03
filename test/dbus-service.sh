@@ -2,9 +2,10 @@
 # libink: org.finit.Service1 vtable + ServiceStateChanged signal.
 #
 # Covers per-service objects exposed at /org/finit/service/<encoded>:
-# GetService lookup, Introspect on a service object, Service1.Restart,
-# authorization (non-root rejected), and the Manager1.ServiceStateChanged
-# signal that Service1.Restart triggers.
+# GetService lookup, Introspect on a service object, Service1
+# properties via Properties.Get, Service1.Restart, authorization
+# (non-root rejected), and the Manager1.ServiceStateChanged signal
+# that Service1.Restart triggers.
 
 set -eu
 
@@ -27,6 +28,27 @@ case "$xml" in
         assert "Service1.Restart visible in service-object XML" 0 -eq 0 ;;
     *)
         fail "Service1 not visible on /org/finit/service/keventd: $xml" ;;
+esac
+
+say "Service1 properties: Identity, State, Pid"
+ident=$(texec "$CLIENT" getprop "$BUS" /org/finit/service/keventd \
+	org.finit.Service1 Identity)
+assert "Identity is keventd (got: $ident)" "$ident" = "keventd"
+
+state=$(texec "$CLIENT" getprop "$BUS" /org/finit/service/keventd \
+	org.finit.Service1 State)
+assert "State is running (got: $state)" "$state" = "running"
+
+pid=$(texec "$CLIENT" getprop "$BUS" /org/finit/service/keventd \
+	org.finit.Service1 Pid)
+assert "Pid is non-zero (got: $pid)" "$pid" -gt 0
+
+say "Service1 properties are advertised in introspection XML"
+case "$xml" in
+    *'<property name="Identity" type="s"'*'<property name="Pid" type="u"'*)
+        assert "Identity and Pid declared with types" 0 -eq 0 ;;
+    *)
+        fail "Property declarations missing from service XML" ;;
 esac
 
 say "Service1.Restart on /org/finit/service/keventd succeeds"

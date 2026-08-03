@@ -338,6 +338,47 @@ static int mode_get_service(int argc, char *argv[])
 	return rc;
 }
 
+/*
+ * getprop BUS PATH IFACE PROP -- Properties.Get, prints the variant
+ * value; dispatches on the wire signature, "s" and "u" supported.
+ */
+static int mode_getprop(int argc, char *argv[])
+{
+	const link_reply_t *r;
+	link_client_t *c;
+	link_reader_t reader;
+	const char *s;
+	uint32_t u;
+	int rc;
+
+	if (argc != 6) return 2;
+	c = link_client_open(argv[2]);
+	if (!c) return 2;
+
+	rc = link_client_call_v(c, argv[3],
+				"org.freedesktop.DBus.Properties", "Get",
+				"ss", argv[4], argv[5]);
+	rc = report_rc(c, rc);
+	if (rc == 0) {
+		char type = 0;
+
+		r = link_client_reply(c);
+		link_reader_init(&reader, r->body, r->body_len);
+		if (link_r_variant_begin(&reader, &type) != 0)
+			rc = 2;
+		else if (type == 's' && link_r_string(&reader, &s) == 0)
+			printf("%s\n", s);
+		else if (type == 'u' && link_r_u32(&reader, &u) == 0)
+			printf("%u\n", u);
+		else {
+			fprintf(stderr, "unsupported variant type '%c'\n", type);
+			rc = 2;
+		}
+	}
+	link_client_close(c);
+	return rc;
+}
+
 static int mode_monitor_signal(int argc, char *argv[])
 {
 	link_client_t *c;
@@ -441,6 +482,7 @@ int main(int argc, char *argv[])
 	if (!strcmp(argv[1], "call-s-as-uid"))    return mode_call_s_as_uid   (argc, argv);
 	if (!strcmp(argv[1], "call-void-as-uid")) return mode_call_void_as_uid(argc, argv);
 	if (!strcmp(argv[1], "get-service"))      return mode_get_service     (argc, argv);
+	if (!strcmp(argv[1], "getprop"))          return mode_getprop         (argc, argv);
 	if (!strcmp(argv[1], "monitor-signal"))   return mode_monitor_signal  (argc, argv);
 	if (!strcmp(argv[1], "unknown"))          return mode_unknown         (argc, argv);
 	fprintf(stderr, "%s: unknown mode '%s'\n", argv[0], argv[1]);
