@@ -324,6 +324,9 @@ event loop to the libink server.
 
 The `initctl` client uses the same library — `link_client_open`,
 `link_client_call_v`, `link_client_reply`, `link_reader_*` — so the
-single wire-format implementation serves both ends.
+single wire-format implementation serves both ends.  libink is an
+internal implementation detail, linked statically into both binaries
+and not installed; external clients should use any standard D-Bus
+library, the wire protocol is the compatibility surface.
 
 [D-Bus]: https://dbus.freedesktop.org/doc/dbus-specification.html

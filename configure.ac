@@ -13,7 +13,7 @@ AC_CONFIG_FILES([Makefile
 	contrib/void/Makefile   contrib/void/finit.d/Makefile   contrib/void/finit.d/available/Makefile
 	doc/Makefile doc/config/Makefile
 	dbus-1/Makefile
-	libink/Makefile libink/libink.pc
+	libink/Makefile
 	libsystemd/Makefile libsystemd/libsystemd.pc
 	man/Makefile
 	plugins/Makefile

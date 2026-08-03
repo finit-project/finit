@@ -62,16 +62,16 @@ jobs:
           tree /tmp || true
       - name: Check dependencies
         run: |
-          LD_LIBRARY_PATH=/tmp/lib ldd  /tmp/sbin/finit
+          ldd  /tmp/sbin/finit
           size /tmp/sbin/finit
-          LD_LIBRARY_PATH=/tmp/lib ldd  /tmp/sbin/initctl
+          ldd  /tmp/sbin/initctl
           size /tmp/sbin/initctl
-          LD_LIBRARY_PATH=/tmp/lib ldd  /tmp/sbin/reboot
+          ldd  /tmp/sbin/reboot
           size /tmp/sbin/reboot
       - name: Verify starting and showing usage text
         run: |
-          sudo env LD_LIBRARY_PATH=/tmp/lib /tmp/sbin/finit -h
-          sudo env LD_LIBRARY_PATH=/tmp/lib /tmp/sbin/initctl -h
+          sudo /tmp/sbin/finit -h
+          sudo /tmp/sbin/initctl -h
       - name: Enable unprivileged userns (unshare)
         run: |
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
