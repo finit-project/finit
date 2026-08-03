@@ -332,6 +332,7 @@ int    link_r_u32     (link_reader_t *r, uint32_t *out);
 int    link_r_string  (link_reader_t *r, const char **out);  /* "s" */
 int    link_r_path    (link_reader_t *r, const char **out);  /* "o" */
 int    link_r_variant_begin (link_reader_t *r, char *type);       /* sig header, cursor at value */
+int    link_r_skip_basic    (link_reader_t *r, char type);        /* skip one basic value */
 int    link_r_variant_string(link_reader_t *r, const char **out); /* "v" containing "s" */
 int    link_r_align   (link_reader_t *r, size_t n);  /* skip to next n-byte boundary */
 int    link_r_done    (const link_reader_t *r);

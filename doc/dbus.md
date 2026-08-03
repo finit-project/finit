@@ -142,6 +142,20 @@ All read-only; observable via `Properties.Get` and `Properties.GetAll`.
 | `Description`  | `s`  | The service's `description` string. |
 | `Command`      | `s`  | Full command line, arguments included. |
 | `Conditions`   | `s`  | Declared conditions, raw `.conf` form. |
+| `Type`         | `s`  | Unit type: `service`, `task`, `run`, `sysv`, `tty`, `free`. |
+| `Origin`       | `s`  | Source `.conf` file, empty for built-ins. |
+| `Environment`  | `s`  | The service's `env` setting, raw. |
+| `PidFile`      | `s`  | Declared PID file, raw (`!` prefix included). |
+| `User`         | `s`  | User the service runs as. |
+| `Group`        | `s`  | Group the service runs as. |
+| `Uptime`       | `u`  | Seconds since start, 0 when not running. |
+| `ExitStatus`   | `u`  | Raw `waitpid(2)` status from the last exit. |
+| `RestartsTotal`| `u`  | Restarts over the service's lifetime. |
+| `RestartMax`   | `u`  | Restart limit before the service is blocked. |
+| `Starts`       | `u`  | Times started, for `manual-start` units. |
+| `ManualStart`  | `b`  | `manual-start` set in the `.conf`. |
+| `Forking`      | `b`  | Daemon forks to background. |
+| `Started`      | `b`  | Run/task completed successfully. |
 
 On every state transition the object also emits the standard
 `org.freedesktop.DBus.Properties.PropertiesChanged` signal: `State`

@@ -305,6 +305,33 @@ int __r_variant_string(struct link_reader *r, const char **out)
 	return read_string_like(r, out);
 }
 
+/*
+ * Skip one basic value of the given type code, as returned by
+ * __r_variant_begin().  Lets a{sv} consumers tolerate value types
+ * they don't know.  Returns -1 on non-basic types.
+ */
+int __r_skip_basic(struct link_reader *r, char type)
+{
+	const char *s;
+	uint32_t    u;
+	uint8_t     y;
+
+	switch (type) {
+	case 's':
+	case 'o':
+		return read_string_like(r, &s);
+	case 'b':
+	case 'u':
+	case 'i':
+		return __r_u32(r, &u);
+	case 'y':
+		return __r_byte(r, &y);
+	default:
+		r->err = 1;
+		return -1;
+	}
+}
+
 /* Read a variant "v" expected to contain a uint32. */
 int __r_variant_u32(struct link_reader *r, uint32_t *out)
 {

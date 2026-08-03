@@ -95,21 +95,50 @@ texec initctl reload keventd >/dev/null \
     || fail "initctl reload keventd returned non-zero"
 assert "Per-service reload ok" 0 -eq 0
 
-say "initctl status summary table renders over D-Bus alone"
-# hide the legacy socket: the table must come over the bus or not at all
+say "initctl status views render over D-Bus alone"
+# hide the legacy socket: everything below must come over the bus
 texec mv /run/finit/socket /run/finit/socket.hidden
+
 set +e
 out=$(texec initctl -p status)
 status_rc=$?
+one=$(texec initctl -p status keventd)
+one_rc=$?
+texec initctl -q status keventd
+quiet_rc=$?
+jout=$(texec initctl -j status)
+json_rc=$?
+idout=$(texec initctl ident)
+ident_rc=$?
 set -e
+
 texec mv /run/finit/socket.hidden /run/finit/socket
-assert "initctl status ok without legacy socket (rc=$status_rc)" \
+
+assert "status table ok without legacy socket (rc=$status_rc)" \
     "$status_rc" -eq 0
 case "$out" in
-    *keventd*) assert "keventd row present" 0 -eq 0 ;;
-    *) fail "keventd missing from status table" ;;
+    *keventd*running*) assert "keventd running in table" 0 -eq 0 ;;
+    *) fail "keventd/running missing from status table" ;;
 esac
-case "$out" in
-    *running*) assert "a running state is shown" 0 -eq 0 ;;
-    *) fail "no running state in status table" ;;
+
+assert "status detail view ok (rc=$one_rc)" "$one_rc" -eq 0
+case "$one" in
+    *"Status : running"*"Identity : keventd"*"Restarts :"*)
+        assert "detail view fields present" 0 -eq 0 ;;
+    *) fail "detail view incomplete: $one" ;;
+esac
+
+assert "quiet mode exit code (rc=$quiet_rc)" "$quiet_rc" -eq 0
+
+assert "json mode ok (rc=$json_rc)" "$json_rc" -eq 0
+case "$jout" in
+    *'"identity": "keventd"'*'"status": "running"'*)
+        assert "json fields present" 0 -eq 0 ;;
+    *) fail "json output incomplete: $jout" ;;
+esac
+
+assert "ident ok (rc=$ident_rc)" "$ident_rc" -eq 0
+case "$idout" in
+    *keventd*) assert "ident lists keventd" 0 -eq 0 ;;
+    *) fail "ident missing keventd" ;;
 esac

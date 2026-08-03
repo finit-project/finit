@@ -592,15 +592,30 @@ static const link_method_t service_methods[] = {
  * ServiceStateChanged strings -- a client that only tracks edges
  * has the signal, a client that asks gets the full story.
  */
+#define SVC_PROP_STR(fn, field)					\
+static int fn(link_writer_t *w, void *arg)			\
+{								\
+	link_w_string(w, ((svc_t *)arg)->field);		\
+	return 0;						\
+}
+
+#define SVC_PROP_U32(fn, field)					\
+static int fn(link_writer_t *w, void *arg)			\
+{								\
+	link_w_u32(w, (uint32_t)((svc_t *)arg)->field);		\
+	return 0;						\
+}
+
+#define SVC_PROP_BOOL(fn, field)				\
+static int fn(link_writer_t *w, void *arg)			\
+{								\
+	link_w_bool(w, ((svc_t *)arg)->field);			\
+	return 0;						\
+}
+
 static int svc_prop_identity(link_writer_t *w, void *arg)
 {
 	link_w_string(w, svc_ident(arg, NULL, 0));
-	return 0;
-}
-
-static int svc_prop_name(link_writer_t *w, void *arg)
-{
-	link_w_string(w, ((svc_t *)arg)->name);
 	return 0;
 }
 
@@ -610,9 +625,9 @@ static int svc_prop_state(link_writer_t *w, void *arg)
 	return 0;
 }
 
-static int svc_prop_desc(link_writer_t *w, void *arg)
+static int svc_prop_type(link_writer_t *w, void *arg)
 {
-	link_w_string(w, ((svc_t *)arg)->desc);
+	link_w_string(w, svc_typestr((svc_t *)arg));
 	return 0;
 }
 
@@ -632,18 +647,6 @@ static int svc_prop_command(link_writer_t *w, void *arg)
 	return 0;
 }
 
-static int svc_prop_runlevels(link_writer_t *w, void *arg)
-{
-	link_w_u32(w, (uint32_t)((svc_t *)arg)->runlevels);
-	return 0;
-}
-
-static int svc_prop_conditions(link_writer_t *w, void *arg)
-{
-	link_w_string(w, ((svc_t *)arg)->cond);
-	return 0;
-}
-
 static int svc_prop_pid(link_writer_t *w, void *arg)
 {
 	svc_t *svc = arg;
@@ -660,6 +663,37 @@ static int svc_prop_restarts(link_writer_t *w, void *arg)
 	return 0;
 }
 
+static int svc_prop_uptime(link_writer_t *w, void *arg)
+{
+	svc_t *svc = arg;
+	long   up = 0;
+
+	if (svc->pid > 0) {
+		up = jiffies() - svc->start_time;
+		if (up < 0)
+			up = 0;
+	}
+	link_w_u32(w, (uint32_t)up);
+	return 0;
+}
+
+SVC_PROP_STR (svc_prop_name,         name)
+SVC_PROP_STR (svc_prop_desc,         desc)
+SVC_PROP_STR (svc_prop_conditions,   cond)
+SVC_PROP_STR (svc_prop_origin,       file)
+SVC_PROP_STR (svc_prop_environ,      env)
+SVC_PROP_STR (svc_prop_pidfile,      pidfile)
+SVC_PROP_STR (svc_prop_user,         username)
+SVC_PROP_STR (svc_prop_group,        group)
+SVC_PROP_U32 (svc_prop_runlevels,    runlevels)
+SVC_PROP_U32 (svc_prop_exitstatus,   status)
+SVC_PROP_U32 (svc_prop_restarts_tot, restart_tot)
+SVC_PROP_U32 (svc_prop_restart_max,  restart_max)
+SVC_PROP_U32 (svc_prop_starts,       once)
+SVC_PROP_BOOL(svc_prop_manual,       manual)
+SVC_PROP_BOOL(svc_prop_forking,      forking)
+SVC_PROP_BOOL(svc_prop_started,      started)
+
 static const link_property_t service_properties[] = {
 	{ .name = "Identity",     .sig = "s", .getter = svc_prop_identity   },
 	{ .name = "Name",         .sig = "s", .getter = svc_prop_name       },
@@ -670,6 +704,20 @@ static const link_property_t service_properties[] = {
 	{ .name = "Description",  .sig = "s", .getter = svc_prop_desc       },
 	{ .name = "Command",      .sig = "s", .getter = svc_prop_command    },
 	{ .name = "Conditions",   .sig = "s", .getter = svc_prop_conditions },
+	{ .name = "Type",         .sig = "s", .getter = svc_prop_type       },
+	{ .name = "Origin",       .sig = "s", .getter = svc_prop_origin     },
+	{ .name = "Environment",  .sig = "s", .getter = svc_prop_environ    },
+	{ .name = "PidFile",      .sig = "s", .getter = svc_prop_pidfile    },
+	{ .name = "User",         .sig = "s", .getter = svc_prop_user       },
+	{ .name = "Group",        .sig = "s", .getter = svc_prop_group      },
+	{ .name = "Uptime",       .sig = "u", .getter = svc_prop_uptime     },
+	{ .name = "ExitStatus",   .sig = "u", .getter = svc_prop_exitstatus },
+	{ .name = "RestartsTotal",.sig = "u", .getter = svc_prop_restarts_tot },
+	{ .name = "RestartMax",   .sig = "u", .getter = svc_prop_restart_max },
+	{ .name = "Starts",       .sig = "u", .getter = svc_prop_starts     },
+	{ .name = "ManualStart",  .sig = "b", .getter = svc_prop_manual     },
+	{ .name = "Forking",      .sig = "b", .getter = svc_prop_forking    },
+	{ .name = "Started",      .sig = "b", .getter = svc_prop_started    },
 	{ NULL, NULL, NULL }
 };
 
