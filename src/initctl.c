@@ -213,6 +213,19 @@ static int show_log(char *arg)
 }
 
 #ifdef HAVE_DBUS
+/*
+ * Advance one a{sv} dict entry: key + variant type; the caller reads
+ * the value with the link_r_* matching `type`.
+ */
+static int dbus_dict_next(link_reader_t *r, const char **key, char *type)
+{
+	if (link_r_align(r, 8) < 0)
+		return -1;
+	if (link_r_string(r, key) < 0)
+		return -1;
+	return link_r_variant_begin(r, type);
+}
+
 /* Fetch all org.finit.Manager1 string properties in one Properties.GetAll
  * round-trip, then pick out a subset.  `wanted` is a NULL-terminated array
  * of property names; `out` parallel-receives the values (each entry left
@@ -254,12 +267,13 @@ static int dbus_get_manager_props(const char *const *wanted, char **out, size_t 
 	while (link_r_pos(&reader) < end) {
 		const char *key  = NULL;
 		const char *val  = NULL;
+		char        type;
 		size_t i;
 
-		if (link_r_align(&reader, 8) < 0)                  break;
-		if (link_r_string(&reader, &key) < 0)              break;
-		if (link_r_variant_string(&reader, &val) < 0)      break;
-		if (!key || !val)                                  break;
+		if (dbus_dict_next(&reader, &key, &type) < 0)
+			goto fail;
+		if (type != 's' || link_r_string(&reader, &val) < 0)
+			goto fail;
 
 		for (i = 0; wanted[i]; i++) {
 			if (!strcmp(key, wanted[i])) {
@@ -271,7 +285,11 @@ static int dbus_get_manager_props(const char *const *wanted, char **out, size_t 
 
 	link_client_close(c);
 	return 0;
+fail:
+	link_client_close(c);
+	return -1;
 }
+
 #endif
 
 static int do_runlevel(char *arg)
@@ -431,20 +449,28 @@ static int try_dbus_manager(const char *method, const char *arg_sig,
 	return (rc == LINK_CALL_OK) ? 0 : -1;
 }
 
+/* Build the object path for a service identity, same encoding as the
+ * server side; use instead of a Manager1.GetService round-trip. */
+static int dbus_svc_path(const char *ident, char *path, size_t len)
+{
+	const char *prefix = "/org/finit/service/";
+	size_t plen = strlen(prefix);
+
+	if (!ident || !*ident || plen >= len)
+		return -1;
+	memcpy(path, prefix, plen);
+	return link_path_encode(ident, path + plen, len - plen);
+}
+
 /* Call a void-arg method on Service1 at /org/finit/service/<encoded>.
  * Same return convention as try_dbus_manager. */
 static int try_dbus_service(const char *method, const char *ident)
 {
 	char path[256];
-	const char *prefix = "/org/finit/service/";
-	size_t plen = strlen(prefix);
 	link_client_t *c;
 	int rc;
 
-	if (!ident || !*ident)
-		return -1;
-	memcpy(path, prefix, plen);
-	if (link_path_encode(ident, path + plen, sizeof(path) - plen) < 0)
+	if (dbus_svc_path(ident, path, sizeof(path)) < 0)
 		return -1;
 
 	c = link_client_open(FINIT_BUS_SOCKET);
@@ -1724,12 +1750,208 @@ static int json_status_one(FILE *fp, svc_t *svc, char *indent, int prev)
 	return 0;
 }
 
+static void status_heading(int pidw, int identw)
+{
+	char title[80];
+
+	snprintf(title, sizeof(title), "%-*s  %-*s  %-8s %-13s ",
+		 pidw, "PID", identw, "IDENT", "STATUS", "RUNLEVELS");
+	strlcat(title, !verbose ? "DESCRIPTION" : "COMMAND", sizeof(title));
+	print_header("%s", title);
+}
+
+static void print_runlevels(const char *lvls)
+{
+	/* ANSI escapes for the active level eat into the field width */
+	if (strchr(lvls, '\e'))
+		printf("%-21.21s ", lvls);
+	else
+		printf("%-13.13s ", lvls);
+}
+
+#ifdef HAVE_DBUS
+/* Status-table fields for one service, fetched over D-Bus. */
+struct svc_row {
+	char     ident[MAX_IDENT_LEN];
+	char     state[16];
+	char     desc[MAX_STR_LEN];
+	char     cmdline[512];
+	uint32_t pid;
+	uint32_t runlevels;
+};
+
+/*
+ * ListServices, then Properties.GetAll per identity.  Returns the
+ * number of rows in *out (caller frees), or -1 to fall back to the
+ * legacy socket.
+ */
+static int dbus_fetch_svc_rows(struct svc_row **out)
+{
+	link_client_t *c;
+	const link_reply_t *r;
+	link_reader_t reader;
+	struct svc_row *rows = NULL;
+	size_t n = 0, i;
+	size_t end;
+	int rc;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	rc = link_client_call_v(c, "/org/finit/manager",
+				"org.finit.Manager1", "ListServices", NULL);
+	if (rc != LINK_CALL_OK)
+		goto fail;
+
+	r = link_client_reply(c);
+	if (!r || !r->body)
+		goto fail;
+
+	link_reader_init(&reader, r->body, r->body_len);
+	if (link_r_array_begin(&reader, &end) < 0)
+		goto fail;
+
+	while (link_r_pos(&reader) < end) {
+		const char *ident;
+		struct svc_row *tmp;
+
+		if (link_r_string(&reader, &ident) < 0)
+			goto fail;
+		tmp = realloc(rows, (n + 1) * sizeof(*rows));
+		if (!tmp)
+			goto fail;
+		rows = tmp;
+		memset(&rows[n], 0, sizeof(rows[n]));
+		/* copied: the next call clobbers the client rx buffer */
+		strlcpy(rows[n].ident, ident, sizeof(rows[n].ident));
+		n++;
+	}
+
+	for (i = 0; i < n; i++) {
+		char path[256];
+
+		if (dbus_svc_path(rows[i].ident, path, sizeof(path)) < 0)
+			goto fail;
+
+		rc = link_client_call_v(c, path,
+					"org.freedesktop.DBus.Properties",
+					"GetAll", "s", "org.finit.Service1");
+		if (rc != LINK_CALL_OK)
+			goto fail;
+		r = link_client_reply(c);
+		if (!r || !r->body)
+			goto fail;
+
+		link_reader_init(&reader, r->body, r->body_len);
+		if (link_r_array_begin(&reader, &end) < 0)
+			goto fail;
+
+		while (link_r_pos(&reader) < end) {
+			const char *key, *val;
+			uint32_t    u;
+			char        type;
+
+			if (dbus_dict_next(&reader, &key, &type) < 0)
+				goto fail;
+
+			if (type == 's') {
+				if (link_r_string(&reader, &val) < 0)
+					goto fail;
+				if (!strcmp(key, "State"))
+					strlcpy(rows[i].state, val,
+						sizeof(rows[i].state));
+				else if (!strcmp(key, "Description"))
+					strlcpy(rows[i].desc, val,
+						sizeof(rows[i].desc));
+				else if (!strcmp(key, "Command"))
+					strlcpy(rows[i].cmdline, val,
+						sizeof(rows[i].cmdline));
+			} else if (type == 'u') {
+				if (link_r_u32(&reader, &u) < 0)
+					goto fail;
+				if (!strcmp(key, "Pid"))
+					rows[i].pid = u;
+				else if (!strcmp(key, "Runlevels"))
+					rows[i].runlevels = u;
+			} else
+				goto fail;
+		}
+	}
+
+	link_client_close(c);
+	*out = rows;
+	return (int)n;
+fail:
+	free(rows);
+	link_client_close(c);
+	return -1;
+}
+
+/* D-Bus twin of the legacy status table; -1 means fall back. */
+static int dbus_show_status_table(void)
+{
+	static const char *const wanted[] = { "Runlevel", NULL };
+	char curr[16] = "0";
+	char *outv[] = { curr };
+	struct svc_row *rows = NULL;
+	int n, i, identw = 0, pidw = 0;
+	int currlevel;
+
+	/* self-contained: no legacy-socket runlevel_get() here */
+	if (dbus_get_manager_props(wanted, outv, sizeof(curr)) < 0)
+		return -1;
+	currlevel = atoi(curr);
+
+	n = dbus_fetch_svc_rows(&rows);
+	if (n < 0)
+		return -1;
+
+	for (i = 0; i < n; i++) {
+		int w;
+
+		w = (int)strlen(rows[i].ident);
+		if (w > identw)
+			identw = w;
+		w = snprintf(NULL, 0, "%u", rows[i].pid);
+		if (w > pidw)
+			pidw = w;
+	}
+	if (identw < 6)
+		identw = 6;
+	if (pidw < 3)
+		pidw = 3;
+
+	if (heading)
+		status_heading(pidw, identw);
+
+	for (i = 0; i < n; i++) {
+		printf("%-*u  ", pidw, rows[i].pid);
+		printf("%-*s  %-8.8s ", identw, rows[i].ident, rows[i].state);
+		print_runlevels(runlevel_string(currlevel, (int)rows[i].runlevels));
+		puts(!verbose ? rows[i].desc : rows[i].cmdline);
+	}
+
+	free(rows);
+	return 0;
+}
+#endif /* HAVE_DBUS */
+
 static int show_status(char *arg)
 {
 	char ident[MAX_IDENT_LEN];
 	char buf[512];
 	int num = 0;
 	svc_t *svc;
+
+#ifdef HAVE_DBUS
+	/*
+	 * Summary table only; the detail view and JSON modes still
+	 * ride the legacy socket.
+	 */
+	if (!arg && !json && dbus_show_status_table() == 0)
+		return 0;
+#endif
 
 	runlevel = runlevel_get(NULL);
 
@@ -1845,34 +2067,17 @@ static int show_status(char *arg)
 	}
 
 	col_widths();
-	if (heading) {
-		char title[80];
-
-		snprintf(title, sizeof(title), "%-*s  %-*s  %-8s %-13s ",
-			 pw, "PID", iw, "IDENT", "STATUS", "RUNLEVELS");
-		if (!verbose)
-			strlcat(title, "DESCRIPTION", sizeof(title)); 
-		else
-			strlcat(title, "COMMAND", sizeof(title)); 
-
-		print_header("%s", title);
-	}
+	if (heading)
+		status_heading(pw, iw);
 
 	for (svc = client_svc_iterator(1); svc; svc = client_svc_iterator(0)) {
-		char *lvls;
-
 		svc_ident(svc, ident, sizeof(ident));
 		if (num && !svc_compare(svc, arg))
 			continue;
 
 		printf("%-*d  ", pw, svc->pid);
 		printf("%-*s  %s ", iw, ident, status(svc, 0));
-
-		lvls = runlevel_string(runlevel, svc->runlevels);
-		if (strchr(lvls, '\e'))
-			printf("%-21.21s ", lvls);
-		else
-			printf("%-13.13s ", lvls);
+		print_runlevels(runlevel_string(runlevel, svc->runlevels));
 
 		if (!verbose)
 			puts(svc->desc);

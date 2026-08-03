@@ -618,7 +618,23 @@ static int svc_prop_desc(link_writer_t *w, void *arg)
 
 static int svc_prop_command(link_writer_t *w, void *arg)
 {
-	link_w_string(w, ((svc_t *)arg)->cmd);
+	svc_t *svc = arg;
+	char   buf[512];
+
+	compose_cmdline(svc, buf, sizeof(buf));
+	if (svc_is_sysv(svc)) {
+		strlcat(buf, " ", sizeof(buf));
+		strlcat(buf, svc->state == SVC_HALTED_STATE
+			? "stop" : "start", sizeof(buf));
+	}
+
+	link_w_string(w, buf);
+	return 0;
+}
+
+static int svc_prop_runlevels(link_writer_t *w, void *arg)
+{
+	link_w_u32(w, (uint32_t)((svc_t *)arg)->runlevels);
 	return 0;
 }
 
@@ -650,6 +666,7 @@ static const link_property_t service_properties[] = {
 	{ .name = "State",        .sig = "s", .getter = svc_prop_state      },
 	{ .name = "Pid",          .sig = "u", .getter = svc_prop_pid        },
 	{ .name = "RestartCount", .sig = "u", .getter = svc_prop_restarts   },
+	{ .name = "Runlevels",    .sig = "u", .getter = svc_prop_runlevels  },
 	{ .name = "Description",  .sig = "s", .getter = svc_prop_desc       },
 	{ .name = "Command",      .sig = "s", .getter = svc_prop_command    },
 	{ .name = "Conditions",   .sig = "s", .getter = svc_prop_conditions },

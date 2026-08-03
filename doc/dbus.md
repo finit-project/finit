@@ -138,8 +138,9 @@ All read-only; observable via `Properties.Get` and `Properties.GetAll`.
 | `State`        | `s`  | Current status, same vocabulary as `initctl status` (richer than the coarse `ServiceStateChanged` strings). |
 | `Pid`          | `u`  | Current PID, 0 when not running. |
 | `RestartCount` | `u`  | Restarts since the last stable run. |
+| `Runlevels`    | `u`  | Allowed runlevels as a bitmask, bit N = runlevel N, bit 10 = S. |
 | `Description`  | `s`  | The service's `description` string. |
-| `Command`      | `s`  | Command line from the `.conf`. |
+| `Command`      | `s`  | Full command line, arguments included. |
 | `Conditions`   | `s`  | Declared conditions, raw `.conf` form. |
 
 On every state transition the object also emits the standard

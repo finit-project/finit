@@ -520,7 +520,7 @@ static int is_norespawn(void)
 		fexist("/tmp/norespawn");
 }
 
-static void compose_cmdline(svc_t *svc, char *buf, size_t len)
+void compose_cmdline(svc_t *svc, char *buf, size_t len)
 {
 	size_t i;
 

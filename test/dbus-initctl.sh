@@ -94,3 +94,22 @@ say "initctl reload <svc> routes through Service1.Reload"
 texec initctl reload keventd >/dev/null \
     || fail "initctl reload keventd returned non-zero"
 assert "Per-service reload ok" 0 -eq 0
+
+say "initctl status summary table renders over D-Bus alone"
+# hide the legacy socket: the table must come over the bus or not at all
+texec mv /run/finit/socket /run/finit/socket.hidden
+set +e
+out=$(texec initctl -p status)
+status_rc=$?
+set -e
+texec mv /run/finit/socket.hidden /run/finit/socket
+assert "initctl status ok without legacy socket (rc=$status_rc)" \
+    "$status_rc" -eq 0
+case "$out" in
+    *keventd*) assert "keventd row present" 0 -eq 0 ;;
+    *) fail "keventd missing from status table" ;;
+esac
+case "$out" in
+    *running*) assert "a running state is shown" 0 -eq 0 ;;
+    *) fail "no running state in status table" ;;
+esac
