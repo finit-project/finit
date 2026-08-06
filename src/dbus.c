@@ -457,15 +457,31 @@ static int manager_suspend(link_call_t *call, void *u)
  * org.freedesktop.DBus.Properties interface.  Getters write a
  * variant containing a single string. */
 
-/* Two distinct getters because the property table is static const --
- * we can't bind &runlevel/&prevlevel through userdata. */
+/*
+ * Two distinct getters because the property table is static const --
+ * we can't bind &runlevel/&prevlevel through userdata.  The values
+ * use the same encoding as the runlevel(8) command and `initctl
+ * runlevel`: "S" for single-user, "N" for no previous runlevel --
+ * the internal digit is not a wire format.
+ */
+static const char *runlevel_encode(int level, char *buf, size_t len)
+{
+	if (level == INIT_LEVEL)
+		strlcpy(buf, "S", len);
+	else if (level >= 0 && level <= 9)
+		snprintf(buf, len, "%d", level);
+	else
+		strlcpy(buf, "N", len);
+
+	return buf;
+}
+
 static int prop_runlevel(link_writer_t *w, void *u)
 {
 	char buf[8];
 
 	(void)u;
-	snprintf(buf, sizeof(buf), "%d", runlevel);
-	link_w_string(w, buf);
+	link_w_string(w, runlevel_encode(runlevel, buf, sizeof(buf)));
 	return 0;
 }
 
@@ -474,7 +490,10 @@ static int prop_prevrunlevel(link_writer_t *w, void *u)
 	char buf[8];
 
 	(void)u;
-	snprintf(buf, sizeof(buf), "%d", prevlevel);
+	if (prevlevel <= 0 || prevlevel > 9)
+		strlcpy(buf, "N", sizeof(buf));
+	else
+		snprintf(buf, sizeof(buf), "%d", prevlevel);
 	link_w_string(w, buf);
 	return 0;
 }
@@ -893,8 +912,8 @@ void dbus_notify_service_state(svc_t *svc, int old_state, int new_state)
 /* ---------- signal emission: RunlevelChanged ----------
  *
  * Fired by sm.c right after the runlevel global flips.  Body is
- * (old, new) as one-digit strings, matching the format that
- * Manager1.Runlevel (the property) returns. */
+ * (old, new) in the same runlevel(8) encoding as the Manager1
+ * Runlevel property: digits, "S", or "N". */
 void dbus_notify_runlevel_change(int old_level, int new_level)
 {
 	uint8_t      body[64];
@@ -902,8 +921,8 @@ void dbus_notify_runlevel_change(int old_level, int new_level)
 	char         old_s[8], new_s[8];
 	ssize_t      blen;
 
-	snprintf(old_s, sizeof(old_s), "%d", old_level);
-	snprintf(new_s, sizeof(new_s), "%d", new_level);
+	runlevel_encode(old_level, old_s, sizeof(old_s));
+	runlevel_encode(new_level, new_s, sizeof(new_s));
 
 	link_writer_init(&w, body, sizeof(body));
 	link_w_string(&w, old_s);

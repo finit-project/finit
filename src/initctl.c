@@ -308,12 +308,8 @@ static int do_runlevel(char *arg)
 
 		if (dbus_get_manager_props(wanted, out, sizeof(curr_buf)) == 0 &&
 		    curr_buf[0] && prev_buf[0]) {
-			int cl = atoi(curr_buf);
-			int pl = atoi(prev_buf);
-
-			curr = (cl == INIT_LEVEL) ? 'S' : (char)(cl + '0');
-			prev = (pl > 0 && pl <= 9) ? (char)(pl + '0') : 'N';
-			printf("%c %c\n", prev, curr);
+			/* already in runlevel(8) encoding: digits, S, N */
+			printf("%s %s\n", prev_buf, curr_buf);
 			return 0;
 		}
 #endif
@@ -2181,6 +2177,15 @@ fail:
 	return -1;
 }
 
+/* wire encoding is runlevel(8) style: digits, S, N */
+static int runlevel_from_str(const char *s)
+{
+	if (!strcmp(s, "S"))
+		return INIT_LEVEL;
+
+	return atoi(s);
+}
+
 /*
  * All show_status() views over D-Bus, self-contained (the current
  * runlevel comes from Manager1, not the legacy socket).  Returns 0
@@ -2216,7 +2221,7 @@ static int dbus_show_status(char *arg, int *retval)
 			/* runlevel feeds the detail view's Runlevels line */
 			if (dbus_get_manager_props(wanted, outv, sizeof(curr)) < 0)
 				goto fail;
-			runlevel = atoi(curr);
+			runlevel = runlevel_from_str(curr);
 			if (json) {
 				*retval = json_status_one(stdout, &rows[0], "", 0);
 				puts("");
@@ -2230,7 +2235,7 @@ static int dbus_show_status(char *arg, int *retval)
 
 	if (dbus_get_manager_props(wanted, outv, sizeof(curr)) < 0)
 		goto fail;
-	runlevel = atoi(curr);
+	runlevel = runlevel_from_str(curr);
 
 	filter = (arg && arg[0]) ? arg : NULL;
 	if (json) {
