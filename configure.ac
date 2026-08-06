@@ -16,6 +16,7 @@ AC_CONFIG_FILES([Makefile
 	man/Makefile
 	plugins/Makefile
 	src/Makefile
+	keventd/Makefile
 	system/Makefile system/10-hotplug.conf
 	test/test.env test/Makefile
 	test/lib/Makefile test/src/Makefile
@@ -118,7 +119,7 @@ AC_PLUGIN([resolvconf],    [no],  [Setup necessary files for resolvconf])
 AC_PLUGIN([x11-common],    [no],  [Console setup (for X)])
 AC_PLUGIN([netlink],       [yes], [Basic netlink plugin for IFUP/IFDN and GW events. Can be replaced with externally built plugin that links with libnl or similar.])
 AC_PLUGIN([hook-scripts],  [no],  [Trigger script execution from hook points])
-AC_PLUGIN([hotplug],       [yes], [Start udevd or mdev kernel event datamon])
+AC_PLUGIN([hotplug],       [no],  [Start udevd or mdev kernel event datamon])
 AC_PLUGIN([rtc],           [yes], [Save and restore RTC using hwclock])
 AC_PLUGIN([tty],           [yes], [Automatically activate new TTYs, e.g. USB-to-serial])
 AC_PLUGIN([urandom],       [yes], [Setup and save random seed at boot/shutdown])
@@ -171,7 +172,10 @@ AC_ARG_WITH(random-seed,
 	[random_seed=$withval], [random_seed=yes])
 
 AC_ARG_WITH(keventd,
-        AS_HELP_STRING([--with-keventd], [Enable built-in keventd, default: no]),, [with_keventd=no])
+        AS_HELP_STRING([--with-keventd], [Enable built-in keventd device manager, default: yes]),, [with_keventd=yes])
+
+AC_ARG_WITH(udev-rules,
+        AS_HELP_STRING([--without-udev-rules], [Skip install of curated udev rules under /lib/udev/rules.d, default: yes when keventd enabled]),, [with_udev_rules=yes])
 
 AC_ARG_WITH(sulogin,
         AS_HELP_STRING([--with-sulogin@<:@=USER@:>@], [Enable built-in sulogin, optional USER to request password for (default root), default: no.]),[sulogin=$withval],[with_sulogin=no])
@@ -318,7 +322,11 @@ AS_IF([test "x$rtc_file" != "xno"], [
 	AC_DEFINE_UNQUOTED(RTC_FILE, "$rtcfile_path", [Save and restore system time from this file if /dev/rtc is missing.])],[
 	AC_DEFINE_UNQUOTED(RTC_FILE, NULL)])
 
-AS_IF([test "x$with_keventd" != "xno"], [with_keventd=yes])
+AS_IF([test "x$with_keventd" != "xno"], [
+	with_keventd=yes
+	PKG_CHECK_MODULES([blkid], [blkid],, [
+		AC_MSG_ERROR([libblkid (util-linux) is required to build keventd.
+		Install the dev package (e.g. libblkid-dev) or disable keventd with --without-keventd])])])
 
 AS_IF([test "x$with_sulogin" != "xno"], [
 	AS_IF([test "x$sulogin" = "xyes"], [
@@ -351,6 +359,7 @@ AS_IF([test "x$with_plugin_path" != "xno"], [
 AM_CONDITIONAL(BASH,        [test "x$bash_dir"        != "xno"])
 AM_CONDITIONAL(STATIC,      [test "x$enable_static"    = "xyes"])
 AM_CONDITIONAL(KEVENTD,     [test "x$with_keventd"    != "xno"])
+AM_CONDITIONAL(UDEV_RULES,  [test "x$with_keventd"    != "xno" -a "x$with_udev_rules" != "xno"])
 AM_CONDITIONAL(SULOGIN,     [test "x$with_sulogin"    != "xno"])
 AM_CONDITIONAL(WATCHDOGD,   [test "x$with_watchdog"   != "xno"])
 AM_CONDITIONAL(LIBSYSTEMD,  [test "x$with_libsystemd" != "xno"])
@@ -434,7 +443,7 @@ Optional features:
   Install doc/..........: $enable_doc
   Install contrib/......: $enable_contrib
   Bash completion.......: $bash_completion_dir
-  Built-in keventd......: $with_keventd
+  Built-in keventd......: $with_keventd (blkid: $blkid_LIBS)
   Built-in sulogin......: $with_sulogin $sulogin
   Built-in watchdogd....: $with_watchdog $watchdog
   Built-in logrotate....: $enable_logrotate

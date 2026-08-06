@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get -y update
-          sudo apt-get -y install pkg-config jq libcap-dev libconfuse-dev
+          sudo apt-get -y install pkg-config jq libcap-dev libconfuse-dev libblkid-dev
           wget https://github.com/troglobit/libuev/releases/download/v2.4.1/libuev-2.4.1.tar.xz
           wget https://github.com/troglobit/libite/releases/download/v2.6.2/libite-2.6.2.tar.gz
           tar xf libuev-2.4.1.tar.xz

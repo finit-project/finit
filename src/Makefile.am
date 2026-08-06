@@ -13,9 +13,6 @@ pkglibexec_PROGRAMS  = getty logit runparts tmpfiles
 if SULOGIN
 pkglibexec_PROGRAMS += sulogin
 endif
-if KEVENTD
-pkglibexec_PROGRAMS += keventd
-endif
 if WATCHDOGD
 pkglibexec_PROGRAMS += watchdogd
 endif
@@ -29,11 +26,6 @@ getty_SOURCES        = finit.h getty.c helpers.h logrotate.c stty.c utmp-api.c u
 getty_CFLAGS         = -W -Wall -Wextra -std=gnu99
 getty_CFLAGS        += $(lite_CFLAGS)
 getty_LDADD          = $(lite_LIBS)
-
-keventd_SOURCES      = keventd.c iwatch.c iwatch.h util.c util.h
-keventd_CFLAGS       = -W -Wall -Wextra -std=gnu99
-keventd_CFLAGS      += $(lite_CFLAGS)
-keventd_LDADD        = $(lite_LIBS)
 
 runparts_SOURCES     = runparts.c
 runparts_CFLAGS      = -W -Wall -Wextra -std=gnu99
