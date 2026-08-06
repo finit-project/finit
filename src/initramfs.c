@@ -119,7 +119,8 @@ static int do_move_mount(const char *oldpath, const char *newroot)
 	makedir(newpath, 0755);
 
 	if (mount(oldpath, newpath, NULL, MS_MOVE, NULL)) {
-		dbg("Failed to move %s to %s: %s", oldpath, newpath, strerror(errno));
+		logit(LOG_ERR, "switch_root: failed to move %s to %s: %s",
+		      oldpath, newpath, strerror(errno));
 		return -1;
 	}
 
@@ -270,10 +271,13 @@ int switch_root(const char *newroot, const char *newinit)
 
 	/* Move virtual filesystems to new root */
 	dbg("Moving virtual filesystems...");
-	do_move_mount("/dev", newroot);
-	do_move_mount("/proc", newroot);
-	do_move_mount("/sys", newroot);
-	do_move_mount("/run", newroot);
+	if (do_move_mount("/dev", newroot) ||
+	    do_move_mount("/proc", newroot) ||
+	    do_move_mount("/sys", newroot) ||
+	    do_move_mount("/run", newroot)) {
+		logit(LOG_ERR, "switch_root: failed to move virtual filesystems, aborting");
+		return -1;
+	}
 
 	/* Change to new root directory */
 	if (chdir(newroot)) {
