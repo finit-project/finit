@@ -60,6 +60,7 @@ int          plugin_init      (uev_ctx_t *ctx);
 void         plugin_exit      (void);
 
 void         iterate_proc     (int (*cb)(int, void *), void *data);
+int          switch_root_precheck(const char *newroot, const char *newinit);
 int          switch_root      (const char *newroot, const char *newinit);
 
 #endif /* FINIT_PRIVATE_H_ */

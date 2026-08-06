@@ -137,19 +137,14 @@ static int kill_cb(int pid, void *data)
 }
 
 /*
- * Perform switch_root to a new root filesystem
- *
- * This function does not return on success - it exec's the new init.
- * On failure, it returns -1 and sets errno.
+ * switch_root_precheck - Validate without side effects, so callers
+ * can reply to a bad request before committing to teardown.
  */
-int switch_root(const char *newroot, const char *newinit)
+int switch_root_precheck(const char *newroot, const char *newinit)
 {
 	struct stat newroot_st, oldroot_st;
 	char init_path[PATH_MAX];
-	int console_fd;
 	int fd;
-	dev_t rootdev;
-	int signo;
 
 	if (!newroot || !newroot[0]) {
 		errno = EINVAL;
@@ -205,6 +200,32 @@ int switch_root(const char *newroot, const char *newinit)
 	if (access(init_path, X_OK)) {
 		logit(LOG_ERR, "switch_root: %s not found or not executable", init_path);
 		errno = ENOENT;
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * Does not return on success - exec's the new init.
+ * On failure, returns -1 and sets errno.
+ */
+int switch_root(const char *newroot, const char *newinit)
+{
+	int console_fd;
+	dev_t rootdev;
+	int signo;
+	struct stat oldroot_st;
+
+	if (switch_root_precheck(newroot, newinit))
+		return -1;
+
+	if (!newinit || !newinit[0])
+		newinit = "/sbin/init";
+
+	/* Needed below for initramfs cleanup */
+	if (stat("/", &oldroot_st)) {
+		logit(LOG_ERR, "switch_root: cannot stat /");
 		return -1;
 	}
 

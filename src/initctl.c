@@ -692,11 +692,11 @@ int do_switch_root(int argc, char *argv[])
 		printf(", init %s", newinit);
 	printf(" ...\n");
 
-	/*
-	 * On success, finit exec's new init and we lose connection.
-	 * A "failure" to read reply is actually expected on success.
-	 */
-	client_send(&rq, sizeof(rq));
+	/* NACK is the only real failure case here, ACK/lost connection means success */
+	if (client_send(&rq, sizeof(rq)) && rq.cmd == INIT_CMD_NACK) {
+		puts(rq.data);
+		return 1;
+	}
 
 	return 0;
 }
@@ -1414,9 +1414,9 @@ static int show_status(char *arg)
 		snprintf(title, sizeof(title), "%-*s  %-*s  %-8s %-13s ",
 			 pw, "PID", iw, "IDENT", "STATUS", "RUNLEVELS");
 		if (!verbose)
-			strlcat(title, "DESCRIPTION", sizeof(title)); 
+			strlcat(title, "DESCRIPTION", sizeof(title));
 		else
-			strlcat(title, "COMMAND", sizeof(title)); 
+			strlcat(title, "COMMAND", sizeof(title));
 
 		print_header("%s", title);
 	}

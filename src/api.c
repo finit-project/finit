@@ -265,10 +265,8 @@ static void bypass_shutdown(void *unused)
 }
 
 /*
- * Handle switch_root API command.
- * Parses data: "newroot\0newinit\0"
- * Sends ACK before attempting switch_root since it doesn't return on success.
- * Returns: result from switch_root() on failure, doesn't return on success.
+ * Validate before ACK, so a bad request gets a real NACK instead
+ * of a false success. Parses "newroot\0newinit\0".
  */
 static int do_switch_root_api(int sd, struct init_request *rq)
 {
@@ -287,8 +285,20 @@ static int do_switch_root_api(int sd, struct init_request *rq)
 			newinit = ptr;
 	}
 
+	if (switch_root_precheck(newroot, newinit)) {
+		result = -1;
+
+		rq->cmd = INIT_CMD_NACK;
+		snprintf(rq->data, sizeof(rq->data), "switch-root: %s", strerror(errno));
+		if (write(sd, rq, sizeof(*rq)) != sizeof(*rq))
+			dbg("Failed sending NACK to client");
+		close(sd);
+
+		return result;
+	}
+
 	/*
-	 * Send ACK first, since we won't return from
+	 * Send ACK now, since we won't return from
 	 * switch_root() on success.
 	 */
 	rq->cmd = INIT_CMD_ACK;
