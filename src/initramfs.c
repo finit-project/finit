@@ -195,11 +195,20 @@ int switch_root_precheck(const char *newroot, const char *newinit)
 		return -1;
 	}
 
-	/* Verify init exists in new root */
-	snprintf(init_path, sizeof(init_path), "%s%s", newroot, newinit);
+	/* Verify init exists in new root and is a regular file */
+	if (snprintf(init_path, sizeof(init_path), "%s%s", newroot, newinit) >= (int)sizeof(init_path)) {
+		logit(LOG_ERR, "switch_root: init path too long");
+		errno = ENAMETOOLONG;
+		return -1;
+	}
 	if (access(init_path, X_OK)) {
 		logit(LOG_ERR, "switch_root: %s not found or not executable", init_path);
 		errno = ENOENT;
+		return -1;
+	}
+	if (stat(init_path, &newroot_st) || !S_ISREG(newroot_st.st_mode)) {
+		logit(LOG_ERR, "switch_root: %s is not a regular file", init_path);
+		errno = EACCES;
 		return -1;
 	}
 
