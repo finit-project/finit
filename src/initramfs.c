@@ -119,7 +119,8 @@ static int do_move_mount(const char *oldpath, const char *newroot)
 	makedir(newpath, 0755);
 
 	if (mount(oldpath, newpath, NULL, MS_MOVE, NULL)) {
-		dbg("Failed to move %s to %s: %s", oldpath, newpath, strerror(errno));
+		logit(LOG_ERR, "switch_root: failed to move %s to %s: %s",
+		      oldpath, newpath, strerror(errno));
 		return -1;
 	}
 
@@ -137,19 +138,14 @@ static int kill_cb(int pid, void *data)
 }
 
 /*
- * Perform switch_root to a new root filesystem
- *
- * This function does not return on success - it exec's the new init.
- * On failure, it returns -1 and sets errno.
+ * switch_root_precheck - Validate without side effects, so callers
+ * can reply to a bad request before committing to teardown.
  */
-int switch_root(const char *newroot, const char *newinit)
+int switch_root_precheck(const char *newroot, const char *newinit)
 {
 	struct stat newroot_st, oldroot_st;
 	char init_path[PATH_MAX];
-	int console_fd;
 	int fd;
-	dev_t rootdev;
-	int signo;
 
 	if (!newroot || !newroot[0]) {
 		errno = EINVAL;
@@ -200,11 +196,46 @@ int switch_root(const char *newroot, const char *newinit)
 		return -1;
 	}
 
-	/* Verify init exists in new root */
-	snprintf(init_path, sizeof(init_path), "%s%s", newroot, newinit);
+	/* Verify init exists in new root and is a regular file */
+	if (snprintf(init_path, sizeof(init_path), "%s%s", newroot, newinit) >= (int)sizeof(init_path)) {
+		logit(LOG_ERR, "switch_root: init path too long");
+		errno = ENAMETOOLONG;
+		return -1;
+	}
 	if (access(init_path, X_OK)) {
 		logit(LOG_ERR, "switch_root: %s not found or not executable", init_path);
 		errno = ENOENT;
+		return -1;
+	}
+	if (stat(init_path, &newroot_st) || !S_ISREG(newroot_st.st_mode)) {
+		logit(LOG_ERR, "switch_root: %s is not a regular file", init_path);
+		errno = EACCES;
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * Does not return on success - exec's the new init.
+ * On failure, returns -1 and sets errno.
+ */
+int switch_root(const char *newroot, const char *newinit)
+{
+	int console_fd;
+	dev_t rootdev;
+	int signo;
+	struct stat oldroot_st;
+
+	if (switch_root_precheck(newroot, newinit))
+		return -1;
+
+	if (!newinit || !newinit[0])
+		newinit = "/sbin/init";
+
+	/* Needed below for initramfs cleanup */
+	if (stat("/", &oldroot_st)) {
+		logit(LOG_ERR, "switch_root: cannot stat /");
 		return -1;
 	}
 
@@ -240,10 +271,13 @@ int switch_root(const char *newroot, const char *newinit)
 
 	/* Move virtual filesystems to new root */
 	dbg("Moving virtual filesystems...");
-	do_move_mount("/dev", newroot);
-	do_move_mount("/proc", newroot);
-	do_move_mount("/sys", newroot);
-	do_move_mount("/run", newroot);
+	if (do_move_mount("/dev", newroot) ||
+	    do_move_mount("/proc", newroot) ||
+	    do_move_mount("/sys", newroot) ||
+	    do_move_mount("/run", newroot)) {
+		logit(LOG_ERR, "switch_root: failed to move virtual filesystems, aborting");
+		return -1;
+	}
 
 	/* Change to new root directory */
 	if (chdir(newroot)) {
