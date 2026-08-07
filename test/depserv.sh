@@ -66,7 +66,9 @@ test_one()
     run "initctl stop foo"
     run "initctl status"
     run "initctl status bar"
-    assert_status "bar" "waiting"
+    # bar passes through stopped on its way to waiting, so this has to
+    # wait for the end of the transition rather than sample it once
+    retry 'assert_status "bar" "waiting"'
 }
 
 run "initctl debug"
