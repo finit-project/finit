@@ -848,6 +848,19 @@ void dbus_unregister_service(svc_t *svc)
  * letting each connection apply its AddMatch filter.  Short-circuits
  * when no peers are connected so dbus_notify_* callers don't have
  * to inspect that state themselves. */
+/* A peer that has gone away is routine rather than a fault: initctl
+ * calls and exits, and on the way down every peer goes at once, which
+ * is not something an operator watching the shutdown needs to read
+ * about.  Keep the warning for a write that failed for some other
+ * reason, where something really is wrong. */
+static int quiet_drop(int err)
+{
+	if (err == EPIPE || err == ECONNRESET || err == ENOTCONN)
+		return 1;
+
+	return runlevel == 0 || runlevel == 6;
+}
+
 static void dbus_emit_signal(const char *path,
 			     const char *interface,
 			     const char *member,
@@ -859,18 +872,23 @@ static void dbus_emit_signal(const char *path,
 	if (!server || TAILQ_EMPTY(&peers))
 		return;
 	TAILQ_FOREACH_SAFE(p, &peers, link, tmp) {
+		int err;
+
 		if (link_connection_emit_signal(p->conn,
 				path, interface, member,
-				signature, body, body_len) < 0) {
-			/* nothing hit the wire, and same for every peer */
-			if (errno == EMSGSIZE || errno == EINVAL)
-				break;
-			logit(LOG_WARNING, "D-Bus peer fd %d write failed: "
-			      "%s, dropping",
-			      link_connection_get_fd(p->conn),
-			      strerror(errno));
-			peer_drop(p);
-		}
+				signature, body, body_len) >= 0)
+			continue;
+
+		err = errno;
+
+		/* nothing hit the wire, and same for every peer */
+		if (err == EMSGSIZE || err == EINVAL)
+			break;
+
+		logit(quiet_drop(err) ? LOG_DEBUG : LOG_WARNING,
+		      "D-Bus peer fd %d write failed: %s, dropping",
+		      link_connection_get_fd(p->conn), strerror(err));
+		peer_drop(p);
 	}
 }
 
