@@ -50,6 +50,7 @@
 #include "conf.h"
 #include "log.h"
 #include "private.h"
+#include "schedule.h"
 #include "service.h"
 #include "sig.h"
 #include "sm.h"
@@ -61,10 +62,12 @@
 struct peer {
 	uev_t              watcher;
 	link_connection_t  *conn;
+	int                dead;
 	TAILQ_ENTRY(peer)  link;
 };
 
 static TAILQ_HEAD(, peer) peers = TAILQ_HEAD_INITIALIZER(peers);
+static TAILQ_HEAD(, peer) reapq = TAILQ_HEAD_INITIALIZER(reapq);
 static link_server_t      *server;
 static uev_t              accept_watcher;
 static size_t             peer_count;
@@ -82,23 +85,55 @@ static void link_log_cb(void *userdata, const char *func, const char *msg)
 	logit(LOG_DEBUG, "%s():%s", func, msg);
 }
 
+/* Close and free everything dropped since the last time round the
+ * event loop.  Safe here because no connection's read loop is on the
+ * stack; see peer_drop(). */
+static void peer_reap(void *arg)
+{
+	struct peer *p;
+
+	(void)arg;
+	while ((p = TAILQ_FIRST(&reapq))) {
+		TAILQ_REMOVE(&reapq, p, link);
+		link_connection_close(p->conn);
+		free(p);
+	}
+}
+
+/* Not zero: a uev timer armed with a zero timeout is a disarmed
+ * timer, so the work would never run and the connections would leak.
+ * Any short delay does, the peer is already unlinked and its watcher
+ * stopped, so nothing touches it in the meantime. */
+static struct wq reap_work = { .cb = peer_reap, .delay = 10 };
+
+/*
+ * A peer can be dropped from inside its own read loop: a handler emits
+ * a signal, the write to this very peer fails, and dbus_emit_signal()
+ * lands here while link_connection_process() still holds the
+ * connection and will touch its rx buffer on the way out.  Freeing now
+ * would pull that out from under it, so unlink the peer and let the
+ * event loop free it once the stack has unwound.
+ */
 static void peer_drop(struct peer *p)
 {
-	int was_sysbus = p == sysbus_peer;
+	if (p->dead)
+		return;		/* already on its way out */
+	p->dead = 1;
 
 	uev_io_stop(&p->watcher);
-	link_connection_close(p->conn);
 	TAILQ_REMOVE(&peers, p, link);
 	peer_count--;
-	free(p);
 
 	/* broker gone; the notify paths probe for its return.  Its unique
 	 * names die with it, so nothing we learned about them is safe to
 	 * carry over to whatever takes its place. */
-	if (was_sysbus) {
+	if (p == sysbus_peer) {
 		sysbus_peer = NULL;
 		sender_cache_flush();
 	}
+
+	TAILQ_INSERT_TAIL(&reapq, p, link);
+	schedule_work(&reap_work);
 }
 
 static void peer_cb(uev_t *w, void *arg, int events)
@@ -1596,6 +1631,9 @@ int dbus_exit(void)
 
 	while ((p = TAILQ_FIRST(&peers)))
 		peer_drop(p);
+
+	/* No read loop is running now, and the timer never will again. */
+	peer_reap(NULL);
 
 	if (server) {
 		link_server_free(server);
