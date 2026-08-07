@@ -91,9 +91,11 @@ struct link_connection {
 
 	/* Match rules registered via org.freedesktop.DBus.AddMatch.
 	 * Bounded for PID 1 hygiene; a peer that exceeds the cap gets
-	 * a LimitsExceeded error reply. */
+	 * a LimitsExceeded error reply.  A broker never registers any,
+	 * it matches for its own clients, so `broker` bypasses them. */
 	struct link_match   *matches[LINK_MATCH_PEER_CAP];
 	size_t              matches_count;
+	int                 broker;
 
 	uint8_t             rxbuf[LINK_RX_BUF_SIZE];
 	size_t              rxlen;

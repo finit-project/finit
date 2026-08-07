@@ -187,12 +187,14 @@ int link_connection_emit_signal(link_connection_t *conn,
 	if (conn->auth != LINK_AUTH_DONE)
 		return 0;	/* peer hasn't finished the SASL phase */
 
-	for (i = 0; i < conn->matches_count; i++) {
+	/* A broker routes to whoever subscribed with it, so it wants
+	 * every signal and never sends us AddMatch of its own. */
+	matched = conn->broker;
+
+	for (i = 0; !matched && i < conn->matches_count; i++) {
 		if (__match_matches(conn->matches[i], path,
-				       interface, member)) {
+				       interface, member))
 			matched = 1;
-			break;
-		}
 	}
 	if (!matched)
 		return 0;	/* peer didn't subscribe — nothing to do */

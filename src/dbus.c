@@ -1280,7 +1280,8 @@ static int try_attach_system_bus(uev_ctx_t *ctx)
 	/* link_server_attach owns the fd from this point on whether it
 	 * succeeds or fails, so the steal-then-attach pair has no leak
 	 * window. */
-	conn = link_server_attach(server, link_client_steal_fd(c), (uid_t)-1);
+	conn = link_server_attach(server, link_client_steal_fd(c), (uid_t)-1,
+				  LINK_ATTACH_BROKER);
 	if (!conn)
 		return -1;
 

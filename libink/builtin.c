@@ -459,6 +459,20 @@ static int handle_remove_match(link_connection_t *conn, const struct link_msg *m
 
 int __handle_builtin(link_connection_t *conn, const struct link_msg *m)
 {
+	/* Hello and AddMatch/RemoveMatch are per-connection state, and on
+	 * a broker link the connection is shared by every caller: one
+	 * sender could exhaust the match cap or drop another's rule.
+	 * Naming and subscription belong to the broker for its own
+	 * clients, so we do not answer these there. */
+	if (conn->broker && m->member &&
+	    (!strcmp(m->member, "Hello") ||
+	     !strcmp(m->member, "AddMatch") ||
+	     !strcmp(m->member, "RemoveMatch"))) {
+		return __send_error(conn, m,
+			"org.freedesktop.DBus.Error.AccessDenied",
+			"Handled by the message bus, not by this peer");
+	}
+
 	if (member_is(m, "org.freedesktop.DBus", "Hello") &&
 	    m->path && strcmp(m->path, "/org/freedesktop/DBus") == 0)
 		return handle_hello(conn, m);

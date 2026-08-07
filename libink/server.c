@@ -162,7 +162,8 @@ int link_server_accept(link_server_t *srv, link_connection_t **out)
 	return 0;
 }
 
-link_connection_t *link_server_attach(link_server_t *srv, int fd, uid_t peer_uid)
+link_connection_t *link_server_attach(link_server_t *srv, int fd, uid_t peer_uid,
+				      unsigned int attach_flags)
 {
 	link_connection_t *conn;
 	int flags;
@@ -194,6 +195,7 @@ link_connection_t *link_server_attach(link_server_t *srv, int fd, uid_t peer_uid
 	conn->auth     = LINK_AUTH_DONE;	/* caller already handshook */
 	conn->server   = srv;
 	conn->peer_uid = peer_uid;
+	conn->broker   = !!(attach_flags & LINK_ATTACH_BROKER);
 	__auth_generate_guid(conn->guid);
 
 	return conn;

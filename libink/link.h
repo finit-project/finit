@@ -105,8 +105,16 @@ int   link_server_accept(link_server_t *server, link_connection_t **conn);
  *
  * On success the connection takes ownership of `fd`.  On any failure
  * `fd` is closed before the function returns NULL, so callers never
- * have to track partial state. */
-link_connection_t *link_server_attach(link_server_t *server, int fd, uid_t peer_uid);
+ * have to track partial state.
+ *
+ * LINK_ATTACH_BROKER says the peer is a message bus rather than an
+ * ordinary client.  A broker subscribes on behalf of its own clients
+ * and never sends us AddMatch, so signals go to it unconditionally
+ * instead of being filtered by this connection's match rules. */
+#define LINK_ATTACH_BROKER  0x01
+
+link_connection_t *link_server_attach(link_server_t *server, int fd, uid_t peer_uid,
+				      unsigned int attach_flags);
 
 int   link_connection_get_fd  (const link_connection_t *conn);
 uid_t link_connection_get_uid (const link_connection_t *conn);
