@@ -88,6 +88,53 @@ typedef struct {
 	size_t         body_len;
 } link_reply_t;
 
+/* ----------  caller identity on a broker connection  ---------- */
+
+/* Handle for a call parked while its caller is identified.  Opaque,
+ * and safe to hold: it encodes a slot and a generation, so resolving
+ * a stale handle is a no-op rather than a use-after-free. */
+typedef uint64_t link_authz_t;
+
+/* "Nobody asked yet", distinct from any real uid.  link_call_uid()
+ * returns this on a broker connection until something forces the
+ * question, which today only a LINK_METHOD_PRIVILEGED method does. */
+#define LINK_UID_UNKNOWN ((uid_t)-1)
+
+/* A broker sets SENDER to a unique name, ":1.<u32>", so this is very
+ * generous.  Callers that key anything on a sender must reject longer
+ * names rather than truncate: two senders sharing a truncated key
+ * would share an identity. */
+#define LINK_SENDER_MAX 64
+
+/* Answer "which uid is `sender`?" for a privileged call arriving on a
+ * broker connection, where SO_PEERCRED describes the broker and not
+ * the caller.
+ *
+ * Return 0 with *uid set when the answer is already known, 1 to answer
+ * later by calling link_uid_resolved() with `tok`, or -1 when it
+ * cannot be determined, which fails the call closed.  Returning 1
+ * without ever calling link_uid_resolved() leaks the slot and leaves
+ * the caller without a reply, so always answer. */
+typedef int (*link_uid_resolver_t)(link_connection_t *conn, const char *sender,
+				   link_authz_t tok, uid_t *uid, void *userdata);
+
+void link_server_set_uid_resolver(link_server_t *server, link_uid_resolver_t cb,
+				  void *userdata);
+
+/* May `uid` invoke a LINK_METHOD_PRIVILEGED method?  Return non-zero
+ * to allow.  Who counts as privileged is the embedder's policy, not
+ * the library's; with no authorizer installed only uid 0 may. */
+typedef int (*link_authorizer_t)(uid_t uid, void *userdata);
+
+void link_server_set_authorizer(link_server_t *server, link_authorizer_t cb,
+				void *userdata);
+
+/* Complete a deferred resolve and resume the parked call.  Pass
+ * (uid_t)-1 to say the caller could not be identified, which denies
+ * it.  Resolving a handle twice, or one whose connection has since
+ * closed, does nothing. */
+void link_uid_resolved(link_server_t *server, link_authz_t tok, uid_t uid);
+
 /* Called with the reply to an outbound link_connection_call().  `reply`
  * is NULL if the connection dropped before one arrived. */
 typedef void (*link_reply_cb_t)(link_connection_t *conn, const link_reply_t *reply,

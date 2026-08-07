@@ -260,7 +260,7 @@ int __send_error(link_connection_t *conn, const struct link_msg *req,
 const char *link_call_path     (const link_call_t *c) { return c ? c->incoming.path      : NULL; }
 const char *link_call_interface(const link_call_t *c) { return c ? c->incoming.interface : NULL; }
 const char *link_call_member   (const link_call_t *c) { return c ? c->incoming.member    : NULL; }
-uid_t       link_call_uid      (const link_call_t *c) { return c ? c->conn->peer_uid     : (uid_t)-1; }
+uid_t       link_call_uid      (const link_call_t *c) { return c ? c->uid               : LINK_UID_UNKNOWN; }
 
 link_writer_t *link_call_reply(link_call_t *call)
 {
@@ -340,8 +340,9 @@ static void deliver_reply(link_connection_t *conn, const struct link_msg *m)
 		if (conn->pending[i].used && conn->pending[i].serial == m->reply_serial)
 			break;
 	}
-	if (i == LINK_PENDING_CAP)
+	if (i == LINK_PENDING_CAP) {
 		return;
+	}
 
 	cb       = conn->pending[i].cb;
 	userdata = conn->pending[i].userdata;
@@ -354,15 +355,105 @@ static void deliver_reply(link_connection_t *conn, const struct link_msg *m)
 	cb(conn, &r, userdata);
 }
 
-int __dispatch_message(link_connection_t *conn, const struct link_msg *m)
-{
-	struct link_object       *o;
-	struct link_vtable_entry *e = NULL;
-	const link_method_t      *meth;
-	struct link_call          call;
-	ssize_t                  blen;
-	int                      rc;
+/* ----------  calls parked while their caller is identified  ---------- */
 
+/* Every park gets a token that is never issued twice, so a resolver
+ * answering late, twice, or after its connection went away resumes
+ * nothing rather than whatever call has since taken the slot. */
+static struct link_parked *park(link_connection_t *conn, const uint8_t *frame,
+				size_t len, link_authz_t *tok)
+{
+	link_server_t *srv = conn->server;
+	int i;
+
+	if (!frame || !len || len > LINK_PARKED_MSG_MAX)
+		return NULL;
+
+	for (i = 0; i < LINK_PARKED_CAP; i++) {
+		if (!srv->parked[i].tok)
+			break;
+	}
+	if (i == LINK_PARKED_CAP)
+		return NULL;
+
+	srv->parked[i].tok  = ++srv->next_tok;
+	srv->parked[i].conn = conn;
+	srv->parked[i].len  = len;
+	memcpy(srv->parked[i].buf, frame, len);
+	*tok = srv->parked[i].tok;
+
+	return &srv->parked[i];
+}
+
+static void unpark(struct link_parked *p)
+{
+	p->tok  = 0;
+	p->conn = NULL;
+}
+
+void __dispatch_forget_conn(link_connection_t *conn)
+{
+	link_server_t *srv = conn->server;
+	int i;
+
+	/* Drop parked calls first.  A pending callback below may try to
+	 * resolve one, and resuming a dispatch on a connection that is
+	 * being torn down is no use to anyone; an invalidated slot makes
+	 * that resolve a no-op instead. */
+	if (srv) {
+		for (i = 0; i < LINK_PARKED_CAP; i++) {
+			if (srv->parked[i].conn == conn)
+				unpark(&srv->parked[i]);
+		}
+	}
+
+	for (i = 0; i < LINK_PENDING_CAP; i++) {
+		if (conn->pending[i].used && conn->pending[i].cb)
+			conn->pending[i].cb(conn, NULL, conn->pending[i].userdata);
+		conn->pending[i].used = 0;
+	}
+}
+
+static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
+			 const uint8_t *frame, size_t framelen,
+			 const uid_t *known_uid);
+
+void link_uid_resolved(link_server_t *server, link_authz_t tok, uid_t uid)
+{
+	uint8_t             buf[LINK_PARKED_MSG_MAX];
+	struct link_parked *p = NULL;
+	link_connection_t  *conn;
+	struct link_msg     msg;
+	size_t              len;
+	int                 i;
+
+	if (!server || !tok)
+		return;
+
+	for (i = 0; i < LINK_PARKED_CAP; i++) {
+		if (server->parked[i].tok == tok) {
+			p = &server->parked[i];
+			break;
+		}
+	}
+	if (!p)
+		return;		/* stale handle, already answered */
+
+	/* Copy the message out and free the slot before dispatching:
+	 * the handler may park a call of its own. */
+	conn = p->conn;
+	len  = p->len;
+	memcpy(buf, p->buf, len);
+	unpark(p);
+
+	if (!conn || __msg_parse(buf, len, &msg) <= 0)
+		return;
+
+	(void)dispatch_call(conn, &msg, NULL, 0, &uid);
+}
+
+int __dispatch_message(link_connection_t *conn, const struct link_msg *m, size_t framelen)
+{
 	if (m->type == LINK_MSG_METHOD_RETURN || m->type == LINK_MSG_ERROR) {
 		deliver_reply(conn, m);
 		return 0;
@@ -373,11 +464,80 @@ int __dispatch_message(link_connection_t *conn, const struct link_msg *m)
 		return 0;
 	}
 
+	return dispatch_call(conn, m, conn->rxbuf, framelen, NULL);
+}
+
+/* Who may invoke a privileged method.  Without an authorizer, only
+ * root, which is what libink can decide on its own. */
+static int caller_may(link_server_t *srv, uid_t uid)
+{
+	if (uid == LINK_UID_UNKNOWN)
+		return 0;
+	if (srv && srv->authorizer)
+		return srv->authorizer(uid, srv->authz_userdata);
+
+	return uid == 0;
+}
+
+/* Ask who is calling on a broker connection, where the message is the
+ * only evidence.  Returns 0 with *uid set, 1 when the call was parked
+ * and will be dispatched again once the resolver answers, -1 when the
+ * caller cannot be identified, and -2 when we have no room to ask. */
+#define CALLER_UID_BUSY (-2)
+
+static int resolve_caller(link_connection_t *conn, const struct link_msg *m,
+			  const uint8_t *frame, size_t framelen, uid_t *uid)
+{
+	link_server_t      *srv = conn->server;
+	struct link_parked *p;
+	link_authz_t        tok;
+	int                 rc;
+
+	if (!srv || !srv->uid_resolver || !m->sender)
+		return -1;
+
+	/* Enforce the rule link.h states, rather than trusting every
+	 * resolver to remember it: a truncated sender key would let two
+	 * callers share one identity. */
+	if (strlen(m->sender) >= LINK_SENDER_MAX) {
+		return -1;
+	}
+
+	/* Park first so the resolver has somewhere to answer, then let
+	 * it release the slot immediately if it already knew. */
+	p = park(conn, frame, framelen, &tok);
+	if (!p)
+		return CALLER_UID_BUSY;
+
+	rc = srv->uid_resolver(conn, m->sender, tok, uid, srv->uid_userdata);
+	if (rc != 1)
+		unpark(p);
+
+	return rc;
+}
+
+static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
+			 const uint8_t *frame, size_t framelen,
+			 const uid_t *known_uid)
+{
+	struct link_object       *o;
+	struct link_vtable_entry *e = NULL;
+	const link_method_t      *meth;
+	struct link_call          call;
+	ssize_t                  blen;
+	uid_t                    call_uid;
+	int                      rc;
+
+	/* What a handler sees via link_call_uid().  Unresolved on a broker
+	 * connection until a privileged method forces the question. */
+	call_uid = known_uid ? *known_uid : conn->peer_uid;
+
 	if (!m->path || !m->member) {
 		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Method call without path or member");
 	}
+
 
 	/* Built-in DBus interfaces (Hello, Ping, Introspect, Properties)
 	 * are handled here before object-tree lookup, which means they
@@ -408,24 +568,47 @@ int __dispatch_message(link_connection_t *conn, const struct link_msg *m)
 		const char *got = m->signature ? m->signature : "";
 		const char *want = meth->in_sig ? meth->in_sig : "";
 
-		if (strcmp(got, want) != 0)
+		if (strcmp(got, want) != 0) {
 			return __send_error(conn, m,
 				"org.freedesktop.DBus.Error.InvalidArgs",
 				"Argument signature mismatch");
+		}
 	}
 
-	/* Per-method authorization.  PRIVILEGED methods require uid 0;
-	 * the peer's uid was captured via SO_PEERCRED at accept time
-	 * and verified against the AUTH EXTERNAL claim, so we can trust
-	 * conn->peer_uid here. */
-	if ((meth->flags & LINK_METHOD_PRIVILEGED) && conn->peer_uid != 0) {
-		return __send_error(conn, m,
-			"org.freedesktop.DBus.Error.AccessDenied",
-			"Method requires root privileges");
+	/* Per-method authorization.  PRIVILEGED methods require uid 0.
+	 * On an ordinary connection the peer's uid was captured via
+	 * SO_PEERCRED at accept time and verified against the AUTH
+	 * EXTERNAL claim, so conn->peer_uid is the answer.  A broker
+	 * connection carries every caller at once, so who is asking has
+	 * to be established per message, which may park the call. */
+	if (meth->flags & LINK_METHOD_PRIVILEGED) {
+		if (conn->broker && !known_uid) {
+			rc = resolve_caller(conn, m, frame, framelen, &call_uid);
+			if (rc == 1)
+				return 0;	/* parked, resumed later */
+
+			if (rc == CALLER_UID_BUSY) {
+				/* Not a permission problem: root may well
+				 * be asking, we just have no slot to find
+				 * out in.  Say so, it is retryable. */
+				return __send_error(conn, m,
+					"org.freedesktop.DBus.Error.LimitsExceeded",
+					"Too many calls awaiting authorization");
+			}
+			if (rc < 0)
+				call_uid = (uid_t)-1;
+		}
+
+		if (!caller_may(conn->server, call_uid)) {
+			return __send_error(conn, m,
+				"org.freedesktop.DBus.Error.AccessDenied",
+				"Caller is not privileged for this method");
+		}
 	}
 
 	memset(&call, 0, sizeof(call));
 	call.conn     = conn;
+	call.uid      = call_uid;
 	call.incoming = *m;
 	__r_init(&call.read_cursor, m->body, m->body_avail);
 

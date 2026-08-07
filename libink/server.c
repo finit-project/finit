@@ -159,8 +159,25 @@ int link_server_accept(link_server_t *srv, link_connection_t **out)
 
 	__auth_generate_guid(conn->guid);
 
+
 	*out = conn;
 	return 0;
+}
+
+void link_server_set_uid_resolver(link_server_t *srv, link_uid_resolver_t cb, void *userdata)
+{
+	if (!srv)
+		return;
+	srv->uid_resolver = cb;
+	srv->uid_userdata = userdata;
+}
+
+void link_server_set_authorizer(link_server_t *srv, link_authorizer_t cb, void *userdata)
+{
+	if (!srv)
+		return;
+	srv->authorizer     = cb;
+	srv->authz_userdata = userdata;
 }
 
 link_connection_t *link_server_attach(link_server_t *srv, int fd, uid_t peer_uid,
@@ -198,6 +215,7 @@ link_connection_t *link_server_attach(link_server_t *srv, int fd, uid_t peer_uid
 	conn->peer_uid = peer_uid;
 	conn->broker   = !!(attach_flags & LINK_ATTACH_BROKER);
 	__auth_generate_guid(conn->guid);
+
 
 	return conn;
 

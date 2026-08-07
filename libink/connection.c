@@ -77,6 +77,7 @@ int link_connection_call(link_connection_t *conn, const char *destination,
 	if (blen > 0 && __io_write_all(conn->fd, body, (size_t)blen) < 0)
 		return -1;
 
+
 	conn->pending[i].used     = 1;
 	conn->pending[i].serial   = serial;
 	conn->pending[i].cb       = cb;
@@ -91,6 +92,11 @@ void link_connection_close(link_connection_t *conn)
 
 	if (!conn)
 		return;
+
+
+	/* Anything waiting on this connection has to be told, or a parked
+	 * call sits forever and its caller never hears back. */
+	__dispatch_forget_conn(conn);
 
 	for (i = 0; i < conn->matches_count; i++)
 		__match_free(conn->matches[i]);
@@ -116,7 +122,7 @@ static int process_binary(link_connection_t *conn)
 		if (consumed < 0)
 			return -1;
 
-		if (__dispatch_message(conn, &msg) < 0)
+		if (__dispatch_message(conn, &msg, (size_t)consumed) < 0)
 			return -1;
 
 		memmove(conn->rxbuf, conn->rxbuf + consumed,

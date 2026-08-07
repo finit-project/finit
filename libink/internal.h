@@ -24,7 +24,7 @@ typedef enum {
 #define LINK_AUTH_LINEBUF_SIZE 256
 #define LINK_RX_BUF_SIZE       (64 * 1024)
 #define LINK_TX_BUF_SIZE       (16 * 1024)
-#define LINK_UNIQUE_NAME_LEN   16
+#define LINK_UNIQUE_NAME_LEN   LINK_SENDER_MAX
 #define LINK_MATCH_RULE_MAX    256	/* per-peer match rule cap */
 #define LINK_MATCH_PEER_CAP    16	/* max active match rules per peer */
 #define LINK_PENDING_CAP        4	/* outbound calls awaiting a reply */
@@ -34,6 +34,12 @@ typedef enum {
  * than a number per call site. */
 #define LINK_CALL_HDR_MAX    1024
 #define LINK_CALL_BODY_MAX   1024
+#define LINK_PARKED_CAP         4	/* inbound calls awaiting a uid */
+/* A call parked for authorization is a privileged one: an object path
+ * and at most a service name.  Finit's per-service paths alone run to
+ * 512 bytes, so leave room for the header around one.  Anything that
+ * does not fit is denied rather than held. */
+#define LINK_PARKED_MSG_MAX  1024
 
 /* Per-vtable record attached to an object's interface list. */
 struct link_vtable_entry {
@@ -53,19 +59,44 @@ struct link_object {
 
 TAILQ_HEAD(link_object_list, link_object);
 
+/* An inbound method call held while we find out who sent it.  The
+ * message is copied because rxbuf is reused as soon as we return to
+ * the read loop.  `tok` is the handle the resolver answers with, and
+ * zero when the slot is free. */
+struct link_parked {
+	link_authz_t        tok;
+	link_connection_t  *conn;
+	size_t              len;
+	uint8_t             buf[LINK_PARKED_MSG_MAX];
+};
+
 struct link_server {
 	int                       fd;
 	char                      path[LINK_PATH_MAX];
 	struct link_object_list    objects;
 	uint32_t                  next_unique_id;	/* for ":1.N" names */
+
+	/* Set by link_server_set_uid_resolver(); see link.h. */
+	link_uid_resolver_t       uid_resolver;
+	void                     *uid_userdata;
+
+	/* Set by link_server_set_authorizer(); see link.h. */
+	link_authorizer_t         authorizer;
+	void                     *authz_userdata;
+	struct link_parked        parked[LINK_PARKED_CAP];
+	link_authz_t              next_tok;
 };
 
 /* The reply being assembled inside a method handler.
  *
  * The reply body lives in conn->txbuf, not on this struct, so a
  * stack-allocated link_call (in dispatch) stays small.  Sharing the
- * connection's txbuf is safe: the event loop is single-threaded and
- * a connection only ever has one in-flight method call at a time. */
+ * connection's txbuf is safe because a reply is marshalled and sent
+ * without yielding.  Note that parking means several calls can be in
+ * flight on one connection: what is held is the request, and
+ * link_uid_resolved() resumes from a copy, so txbuf is still only
+ * ever used by one reply at a time.  An async handler that returned
+ * before writing its reply would break that. */
 struct link_call {
 	link_connection_t *conn;
 	struct link_msg    incoming;
@@ -73,6 +104,7 @@ struct link_call {
 	struct link_writer reply_writer;	/* writes into conn->txbuf */
 	int               reply_consumed;
 	int               error_sent;
+	uid_t             uid;		/* caller, resolved for a broker peer */
 };
 
 /* A parsed AddMatch rule.  Fields are NULL when the rule omits the
@@ -138,7 +170,8 @@ void __auth_generate_guid(char out[33]);
 int  __auth_client(int fd, uid_t uid);
 
 /* dispatch.c */
-int  __dispatch_message(link_connection_t *conn, const struct link_msg *m);
+int  __dispatch_message(link_connection_t *conn, const struct link_msg *m, size_t framelen);
+void __dispatch_forget_conn(link_connection_t *conn);
 int  __send_error(link_connection_t *conn, const struct link_msg *req,
 		     const char *error_name, const char *text);
 int  __send_method_return(link_connection_t *conn, const struct link_msg *req,
