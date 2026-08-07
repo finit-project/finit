@@ -24,6 +24,7 @@
 struct link_client {
 	int          fd;
 	uint32_t     next_serial;
+	const char  *destination;	/* not owned; NULL when brokerless */
 	link_reply_t reply;		/* most recent reply view (points into rxbuf) */
 	/* Distinct from "reply.type == 0": LINK_MSG_INVALID is 0, which
 	 * is a wire-valid (if malformed) type, so we need an out-of-band
@@ -85,6 +86,12 @@ link_client_t *link_client_open_timeout(const char *path, int timeout_ms)
 link_client_t *link_client_open(const char *path)
 {
 	return link_client_open_timeout(path, 0);
+}
+
+void link_client_set_destination(link_client_t *c, const char *destination)
+{
+	if (c)
+		c->destination = destination;
 }
 
 void link_client_close(link_client_t *c)
@@ -187,6 +194,41 @@ static void clear_reply(link_client_t *c)
 	c->have_reply = 0;
 }
 
+/* A broker interleaves traffic of its own with our replies: claiming a
+ * name makes it emit NameAcquired, and it arrives before the reply to
+ * the call that caused it.  Read past anything that is not the reply
+ * we are waiting for.  On a brokerless link nothing is interleaved and
+ * the first message read is always the one we want.
+ *
+ * Bounded so a chatty or hostile broker cannot stall PID 1 here; each
+ * read is bounded in turn by SO_RCVTIMEO when the caller asked for a
+ * timeout at open. */
+#define LINK_CALL_MAX_SKIP 16
+
+static int read_reply(link_client_t *c, uint32_t serial)
+{
+	int i;
+
+	for (i = 0; i < LINK_CALL_MAX_SKIP; i++) {
+		struct link_msg msg;
+
+		if (read_one(c, &msg) < 0)
+			return -1;
+
+		/* Not a reply at all, or a reply to something else. */
+		if (msg.type != LINK_MSG_METHOD_RETURN && msg.type != LINK_MSG_ERROR)
+			continue;
+		if (msg.reply_serial != serial)
+			continue;
+
+		publish_reply(c, &msg);
+		return 0;
+	}
+
+	errno = EPROTO;
+	return -1;
+}
+
 /* Wait up to timeout_ms (-1 = forever) for one full inbound frame
  * and publish it.  Returns 0 on success, 1 on timeout, -1 on error. */
 static int read_and_publish(link_client_t *c, int timeout_ms)
@@ -235,6 +277,7 @@ int link_client_call(link_client_t *c,
 	serial = c->next_serial++;
 	hlen = __msg_build_method_call(hdr, sizeof(hdr), serial,
 					   obj_path, interface, member,
+					   c->destination,
 					   signature, (uint32_t)body_len);
 	if (hlen < 0)
 		return LINK_CALL_FAIL;
@@ -244,7 +287,7 @@ int link_client_call(link_client_t *c,
 	if (body_len > 0 && send_all(c->fd, body, body_len) < 0)
 		return LINK_CALL_FAIL;
 
-	if (read_and_publish(c, -1) != 0)
+	if (read_reply(c, serial) < 0)
 		return LINK_CALL_FAIL;
 
 	if (c->reply.type == LINK_MSG_METHOD_RETURN)

@@ -89,12 +89,14 @@ ssize_t __msg_build_signal(uint8_t *buf, size_t cap,
 			      const char *member,
 			      const char *signature, uint32_t body_len);
 
-/* Build a method-call header (client side). */
+/* Build a method-call header (client side).  `destination` is NULL
+ * when no broker routes the message. */
 ssize_t __msg_build_method_call(uint8_t *buf, size_t cap,
 				    uint32_t serial,
 				    const char *path,
 				    const char *interface,
 				    const char *member,
+				    const char *destination,
 				    const char *signature,
 				    uint32_t body_len);
 

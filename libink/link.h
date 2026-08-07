@@ -226,6 +226,13 @@ link_client_t *link_client_open_timeout(const char *path, int timeout_ms);
 
 void           link_client_close(link_client_t *c);
 
+/* Address subsequent calls on `c` to a well-known name.  Needed when
+ * a broker routes the message, e.g. "org.freedesktop.DBus" to reach
+ * the bus driver itself; a brokerless link has a single peer and
+ * needs no destination, which is the default.  `destination` is not
+ * copied, so it must outlive the client. */
+void           link_client_set_destination(link_client_t *c, const char *destination);
+
 /* Detach the authenticated socket from the client and return the raw
  * fd; subsequent link_client_close on `c` is invalid because the
  * structure has already been freed.  Used by callers (e.g. system-bus

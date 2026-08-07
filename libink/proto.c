@@ -354,6 +354,7 @@ ssize_t __msg_build_method_call(uint8_t *buf, size_t cap,
 				    const char *path,
 				    const char *interface,
 				    const char *member,
+				    const char *destination,
 				    const char *signature,
 				    uint32_t body_len)
 {
@@ -368,6 +369,9 @@ ssize_t __msg_build_method_call(uint8_t *buf, size_t cap,
 	    put_field_string(buf, cap, &off, LINK_HDR_INTERFACE, 's', interface) < 0)
 		return -1;
 	if (put_field_string(buf, cap, &off, LINK_HDR_MEMBER, 's', member) < 0)
+		return -1;
+	if (destination &&
+	    put_field_string(buf, cap, &off, LINK_HDR_DESTINATION, 's', destination) < 0)
 		return -1;
 	if (signature && *signature &&
 	    put_field_string(buf, cap, &off, LINK_HDR_SIGNATURE, 'g', signature) < 0)
