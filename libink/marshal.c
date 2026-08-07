@@ -376,3 +376,34 @@ int __r_array_begin(struct link_reader *r, size_t *out_end)
 	*out_end = end;
 	return 0;
 }
+
+ssize_t __marshal_va(uint8_t *body, size_t cap, const char *sig, va_list ap)
+{
+	struct link_writer w;
+	const char        *s;
+
+	__w_init(&w, body, cap);
+	for (s = sig; *s; s++) {
+		switch (*s) {
+		case 'y':
+			__w_byte(&w, (uint8_t)va_arg(ap, int));
+			break;
+		case 'b':
+			__w_bool(&w, va_arg(ap, int));
+			break;
+		case 'u':
+			__w_u32(&w, va_arg(ap, uint32_t));
+			break;
+		case 's':
+			__w_string(&w, va_arg(ap, const char *));
+			break;
+		case 'o':
+			__w_path(&w, va_arg(ap, const char *));
+			break;
+		default:
+			return -1;
+		}
+	}
+
+	return __w_finish(&w);
+}

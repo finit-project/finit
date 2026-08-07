@@ -6,8 +6,10 @@
 #ifndef LIBINK_MARSHAL_H_
 #define LIBINK_MARSHAL_H_
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 /* struct link_writer is defined in ink.h (public).  Field layout is
  * "opaque" per the public contract; this file's helpers manipulate
@@ -51,5 +53,11 @@ int  __r_variant_u32   (struct link_reader *r, uint32_t *out);    /* "v" contain
 int  __r_align (struct link_reader *r, size_t n);  /* skip to n-byte boundary */
 int  __r_array_begin(struct link_reader *r, size_t *out_end);
 int  __r_done  (const struct link_reader *r);
+
+/* Marshal varargs into `body` (capacity `cap`) according to `sig`.
+ * Returns the marshalled length, or -1 on overflow or an unsupported
+ * type code.  Shared by the synchronous client and the asynchronous
+ * connection-side call. */
+ssize_t __marshal_va(uint8_t *body, size_t cap, const char *sig, va_list ap);
 
 #endif /* LIBINK_MARSHAL_H_ */

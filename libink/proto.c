@@ -389,3 +389,15 @@ size_t __msg_header_size(const struct link_msg *m)
 	/* Generous upper bound used by callers to size send buffers. */
 	return 512;
 }
+
+void __msg_to_reply(link_reply_t *r, const struct link_msg *m)
+{
+	r->type       = m->type;
+	r->signature  = m->signature;
+	r->error_name = m->error_name;
+	r->path       = m->path;
+	r->interface  = m->interface;
+	r->member     = m->member;
+	r->body       = m->body_avail ? m->body : NULL;
+	r->body_len   = m->body_avail;
+}

@@ -88,6 +88,20 @@ typedef struct {
 	size_t         body_len;
 } link_reply_t;
 
+/* Called with the reply to an outbound link_connection_call().  `reply`
+ * is NULL if the connection dropped before one arrived. */
+typedef void (*link_reply_cb_t)(link_connection_t *conn, const link_reply_t *reply,
+				void *userdata);
+
+/* Issue a method call on an established connection and invoke `cb`
+ * when the reply lands.  Unlike link_client_call() this never blocks:
+ * the reply is picked up by the normal read loop.  Argument marshalling
+ * matches link_client_call_v(). */
+int link_connection_call(link_connection_t *conn, const char *destination,
+			 const char *path, const char *interface, const char *member,
+			 link_reply_cb_t cb, void *userdata,
+			 const char *signature, ...);
+
 /* ----------  server / connection lifecycle  ---------- */
 
 /* Bind a listening socket at `path` with file mode `mode`, e.g. 0660

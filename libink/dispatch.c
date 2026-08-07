@@ -324,6 +324,36 @@ size_t link_r_pos (const link_reader_t *r)            { return r->off;          
 
 /* ----------  dispatch entry point  ---------- */
 
+/* ----------  replies to our own outbound calls  ---------- */
+
+/* Hand a reply to whoever issued the matching link_connection_call().
+ * Unmatched replies are dropped: a broker is free to send us things we
+ * never asked for, and that is not a reason to drop the connection. */
+static void deliver_reply(link_connection_t *conn, const struct link_msg *m)
+{
+	link_reply_cb_t  cb;
+	link_reply_t     r;
+	void            *userdata;
+	int              i;
+
+	for (i = 0; i < LINK_PENDING_CAP; i++) {
+		if (conn->pending[i].used && conn->pending[i].serial == m->reply_serial)
+			break;
+	}
+	if (i == LINK_PENDING_CAP)
+		return;
+
+	cb       = conn->pending[i].cb;
+	userdata = conn->pending[i].userdata;
+	conn->pending[i].used = 0;
+
+	if (!cb)
+		return;
+
+	__msg_to_reply(&r, m);
+	cb(conn, &r, userdata);
+}
+
 int __dispatch_message(link_connection_t *conn, const struct link_msg *m)
 {
 	struct link_object       *o;
@@ -333,9 +363,13 @@ int __dispatch_message(link_connection_t *conn, const struct link_msg *m)
 	ssize_t                  blen;
 	int                      rc;
 
+	if (m->type == LINK_MSG_METHOD_RETURN || m->type == LINK_MSG_ERROR) {
+		deliver_reply(conn, m);
+		return 0;
+	}
+
 	if (m->type != LINK_MSG_METHOD_CALL) {
-		/* Signals and replies from a client to PID 1 are nonsense;
-		 * silently drop. */
+		/* Signals from a client to PID 1 are nonsense; drop. */
 		return 0;
 	}
 

@@ -5,6 +5,7 @@
  */
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -19,6 +20,69 @@ int link_connection_get_fd(const link_connection_t *conn)
 uid_t link_connection_get_uid(const link_connection_t *conn)
 {
 	return conn ? conn->peer_uid : (uid_t)-1;
+}
+
+/* Issue a method call and remember the serial so the reply can be
+ * handed back to `cb` when the read loop picks it up.  Nothing here
+ * waits: this is the counterpart of link_client_call() for a
+ * connection already owned by the event loop. */
+int link_connection_call(link_connection_t *conn, const char *destination,
+			 const char *path, const char *interface, const char *member,
+			 link_reply_cb_t cb, void *userdata,
+			 const char *signature, ...)
+{
+	uint8_t  body[LINK_CALL_BODY_MAX];
+	uint8_t  hdr[LINK_CALL_HDR_MAX];
+	ssize_t  blen = 0;
+	ssize_t  hlen;
+	uint32_t serial;
+	int      i;
+
+	if (!conn || conn->fd < 0 || !path || !member) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	for (i = 0; i < LINK_PENDING_CAP; i++) {
+		if (!conn->pending[i].used)
+			break;
+	}
+	if (i == LINK_PENDING_CAP) {
+		errno = EBUSY;
+		return -1;
+	}
+
+	if (signature && *signature) {
+		va_list ap;
+
+		va_start(ap, signature);
+		blen = __marshal_va(body, sizeof(body), signature, ap);
+		va_end(ap);
+		if (blen < 0) {
+			errno = EMSGSIZE;
+			return -1;
+		}
+	}
+
+	serial = ++conn->next_serial;
+	hlen = __msg_build_method_call(hdr, sizeof(hdr), serial, path, interface,
+				       member, destination, signature, (uint32_t)blen);
+	if (hlen < 0) {
+		errno = EMSGSIZE;
+		return -1;
+	}
+
+	if (__io_write_all(conn->fd, hdr, (size_t)hlen) < 0)
+		return -1;
+	if (blen > 0 && __io_write_all(conn->fd, body, (size_t)blen) < 0)
+		return -1;
+
+	conn->pending[i].used     = 1;
+	conn->pending[i].serial   = serial;
+	conn->pending[i].cb       = cb;
+	conn->pending[i].userdata = userdata;
+
+	return 0;
 }
 
 void link_connection_close(link_connection_t *conn)

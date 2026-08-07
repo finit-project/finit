@@ -60,6 +60,11 @@ struct link_msg {
  * needed, -1 on malformed input. */
 ssize_t __msg_parse(const uint8_t *buf, size_t len, struct link_msg *out);
 
+/* Project a parsed message onto the public reply view.  Shared by the
+ * synchronous client and the connection-side reply routing so the two
+ * cannot drift as link_reply_t grows. */
+void __msg_to_reply(link_reply_t *r, const struct link_msg *m);
+
 /* Compute the on-wire size of a future message header given the
  * fields we'd populate.  Used to size send buffers. */
 size_t __msg_header_size(const struct link_msg *m);

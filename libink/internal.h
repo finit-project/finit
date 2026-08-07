@@ -27,6 +27,13 @@ typedef enum {
 #define LINK_UNIQUE_NAME_LEN   16
 #define LINK_MATCH_RULE_MAX    256	/* per-peer match rule cap */
 #define LINK_MATCH_PEER_CAP    16	/* max active match rules per peer */
+#define LINK_PENDING_CAP        4	/* outbound calls awaiting a reply */
+/* Staging for an outgoing method call.  Generous on purpose: headers
+ * for the calls libink makes run to ~150 B, and both the synchronous
+ * and the connection-side path build into these, so one answer rather
+ * than a number per call site. */
+#define LINK_CALL_HDR_MAX    1024
+#define LINK_CALL_BODY_MAX   1024
 
 /* Per-vtable record attached to an object's interface list. */
 struct link_vtable_entry {
@@ -107,6 +114,16 @@ struct link_connection {
 	uint8_t             txbuf[LINK_TX_BUF_SIZE];
 
 	uint32_t            next_serial;
+
+	/* Outbound calls we made on this connection, awaiting replies.
+	 * Only a broker connection uses these today, to ask the bus
+	 * driver who a sender is. */
+	struct {
+		int              used;
+		uint32_t         serial;
+		link_reply_cb_t  cb;
+		void            *userdata;
+	} pending[LINK_PENDING_CAP];
 
 	struct link_server  *server;	/* back-pointer for dispatch */
 };

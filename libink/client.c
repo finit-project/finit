@@ -171,15 +171,8 @@ static int read_one(link_client_t *c, struct link_msg *msg)
 
 static void publish_reply(link_client_t *c, const struct link_msg *m)
 {
-	c->reply.type       = m->type;
-	c->reply.signature  = m->signature;
-	c->reply.error_name = m->error_name;
-	c->reply.path       = m->path;
-	c->reply.interface  = m->interface;
-	c->reply.member     = m->member;
-	c->reply.body       = m->body_avail ? m->body : NULL;
-	c->reply.body_len   = m->body_avail;
-	c->have_reply       = 1;
+	__msg_to_reply(&c->reply, m);
+	c->have_reply = 1;
 }
 
 /* The reply view in c->reply points into c->rxbuf and is invalidated
@@ -261,12 +254,7 @@ int link_client_call(link_client_t *c,
 		     const char *signature,
 		     const uint8_t *body, size_t body_len)
 {
-	/* Generous: Manager1 headers fit in ~150 B, but the buffer is
-	 * shared with whatever future callers throw at us, and an
-	 * overflow only manifests as a silent LINK_CALL_FAIL via
-	 * __msg_build_method_call returning -1.  1 KiB on stack
-	 * is cheap insurance. */
-	uint8_t  hdr[1024];
+	uint8_t  hdr[LINK_CALL_HDR_MAX];
 	ssize_t  hlen;
 	uint32_t serial;
 
@@ -328,54 +316,20 @@ int link_reply_get_u32(const link_reply_t *r, uint32_t *out)
 	return link_r_u32(&reader, out);
 }
 
-/* Marshal varargs into `body` (capacity `cap`) according to `sig`.
- * Returns the marshalled length on success, -1 on overflow or
- * unsupported type code. */
-static ssize_t marshal_va(uint8_t *body, size_t cap,
-			  const char *sig, va_list ap)
-{
-	link_writer_t w;
-	const char   *s;
-
-	link_writer_init(&w, body, cap);
-	for (s = sig; *s; s++) {
-		switch (*s) {
-		case 'y':
-			link_w_byte(&w, (uint8_t)va_arg(ap, int));
-			break;
-		case 'b':
-			link_w_bool(&w, va_arg(ap, int));
-			break;
-		case 'u':
-			link_w_u32(&w, va_arg(ap, uint32_t));
-			break;
-		case 's':
-			link_w_string(&w, va_arg(ap, const char *));
-			break;
-		case 'o':
-			link_w_path(&w, va_arg(ap, const char *));
-			break;
-		default:
-			return -1;
-		}
-	}
-	return link_writer_finish(&w);
-}
-
 int link_client_call_v(link_client_t *c,
 		       const char *obj_path,
 		       const char *interface,
 		       const char *member,
 		       const char *signature, ...)
 {
-	uint8_t body[1024];
+	uint8_t body[LINK_CALL_BODY_MAX];
 	ssize_t body_len = 0;
 
 	if (signature && *signature) {
 		va_list ap;
 
 		va_start(ap, signature);
-		body_len = marshal_va(body, sizeof(body), signature, ap);
+		body_len = __marshal_va(body, sizeof(body), signature, ap);
 		va_end(ap);
 		if (body_len < 0)
 			return LINK_CALL_FAIL;
