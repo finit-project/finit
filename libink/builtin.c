@@ -468,6 +468,7 @@ int __handle_builtin(link_connection_t *conn, const struct link_msg *m)
 	    (!strcmp(m->member, "Hello") ||
 	     !strcmp(m->member, "AddMatch") ||
 	     !strcmp(m->member, "RemoveMatch"))) {
+		__dbg("%s is the broker's to answer, not ours", m->member);
 		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.AccessDenied",
 			"Handled by the message bus, not by this peer");

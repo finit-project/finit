@@ -341,6 +341,7 @@ static void deliver_reply(link_connection_t *conn, const struct link_msg *m)
 			break;
 	}
 	if (i == LINK_PENDING_CAP) {
+		__dbg("unsolicited reply, serial %u", m->reply_serial);
 		return;
 	}
 
@@ -449,6 +450,7 @@ void link_uid_resolved(link_server_t *server, link_authz_t tok, uid_t uid)
 	if (!conn || __msg_parse(buf, len, &msg) <= 0)
 		return;
 
+	__dbg("resumed %s, caller uid %d", msg.member ? msg.member : "call", (int)uid);
 	(void)dispatch_call(conn, &msg, NULL, 0, &uid);
 }
 
@@ -500,6 +502,7 @@ static int resolve_caller(link_connection_t *conn, const struct link_msg *m,
 	 * resolver to remember it: a truncated sender key would let two
 	 * callers share one identity. */
 	if (strlen(m->sender) >= LINK_SENDER_MAX) {
+		__dbg("sender name too long, refusing to identify it");
 		return -1;
 	}
 
@@ -512,6 +515,8 @@ static int resolve_caller(link_connection_t *conn, const struct link_msg *m,
 	rc = srv->uid_resolver(conn, m->sender, tok, uid, srv->uid_userdata);
 	if (rc != 1)
 		unpark(p);
+	else
+		__dbg("parked %s from %s, awaiting caller uid", m->member, m->sender);
 
 	return rc;
 }
@@ -533,11 +538,15 @@ static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
 	call_uid = known_uid ? *known_uid : conn->peer_uid;
 
 	if (!m->path || !m->member) {
+		__dbg("malformed call, no path or member");
 		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.InvalidArgs",
 			"Method call without path or member");
 	}
 
+	__dbg("call %s %s.%s from %s", m->path,
+	      m->interface ? m->interface : "-", m->member,
+	      m->sender ? m->sender : "peer");
 
 	/* Built-in DBus interfaces (Hello, Ping, Introspect, Properties)
 	 * are handled here before object-tree lookup, which means they
@@ -551,6 +560,7 @@ static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
 
 	o = find_object(conn->server, m->path);
 	if (!o) {
+		__dbg("no such object %s", m->path);
 		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.UnknownObject",
 			"No such object");
@@ -558,6 +568,7 @@ static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
 
 	meth = resolve(o, m->interface, m->member, &e);
 	if (!meth) {
+		__dbg("no such method %s on %s", m->member, m->path);
 		return __send_error(conn, m,
 			"org.freedesktop.DBus.Error.UnknownMethod",
 			"No such method on this object");
@@ -569,6 +580,7 @@ static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
 		const char *want = meth->in_sig ? meth->in_sig : "";
 
 		if (strcmp(got, want) != 0) {
+			__dbg("%s takes '%s', caller sent '%s'", m->member, want, got);
 			return __send_error(conn, m,
 				"org.freedesktop.DBus.Error.InvalidArgs",
 				"Argument signature mismatch");
@@ -591,6 +603,7 @@ static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
 				/* Not a permission problem: root may well
 				 * be asking, we just have no slot to find
 				 * out in.  Say so, it is retryable. */
+				__dbg("no free slot to identify %s", m->sender);
 				return __send_error(conn, m,
 					"org.freedesktop.DBus.Error.LimitsExceeded",
 					"Too many calls awaiting authorization");
@@ -600,6 +613,8 @@ static int dispatch_call(link_connection_t *conn, const struct link_msg *m,
 		}
 
 		if (!caller_may(conn->server, call_uid)) {
+			__dbg("denied %s, caller uid %d is not privileged",
+			      m->member, (int)call_uid);
 			return __send_error(conn, m,
 				"org.freedesktop.DBus.Error.AccessDenied",
 				"Caller is not privileged for this method");

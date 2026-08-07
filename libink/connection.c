@@ -77,6 +77,8 @@ int link_connection_call(link_connection_t *conn, const char *destination,
 	if (blen > 0 && __io_write_all(conn->fd, body, (size_t)blen) < 0)
 		return -1;
 
+	__dbg("calling %s.%s on %s, serial %u", interface ? interface : "-",
+	      member, destination ? destination : "peer", serial);
 
 	conn->pending[i].used     = 1;
 	conn->pending[i].serial   = serial;
@@ -93,6 +95,7 @@ void link_connection_close(link_connection_t *conn)
 	if (!conn)
 		return;
 
+	__dbg("closing peer on fd %d", conn->fd);
 
 	/* Anything waiting on this connection has to be told, or a parked
 	 * call sits forever and its caller never hears back. */

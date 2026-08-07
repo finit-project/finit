@@ -11,7 +11,7 @@ libink_la_SOURCES        = server.c auth.c connection.c \
                            dispatch.c builtin.c          \
                            match.c                       \
                            path.c                        \
-                           client.c io.c                 \
+                           client.c io.c log.c           \
                            link.h path.h internal.h
 
 libink_la_CPPFLAGS       = -D_GNU_SOURCE -D_DEFAULT_SOURCE -D_BSD_SOURCE

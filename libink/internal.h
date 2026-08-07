@@ -160,6 +160,11 @@ struct link_connection {
 	struct link_server  *server;	/* back-pointer for dispatch */
 };
 
+/* log.c — tracing, no-op unless the embedder installed a callback. */
+void __log(const char *func, const char *fmt, ...)
+	__attribute__((format(printf, 2, 3)));
+#define __dbg(fmt, ...)  __log(__func__, fmt, ##__VA_ARGS__)
+
 /* io.c — shared EINTR-resilient I/O loops. */
 int  __io_write_all(int fd, const void *buf, size_t len);
 int  __io_read_full(int fd, void *buf,       size_t len);

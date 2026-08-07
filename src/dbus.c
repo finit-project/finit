@@ -73,6 +73,15 @@ static struct peer        *sysbus_peer;
 static void sysbus_probe(void);
 static void sender_cache_flush(void);
 
+/* libink has no logger of its own, so give it ours.  The func name it
+ * passes takes the place of dbg()'s __func__, which would otherwise
+ * always read "link_log_cb". */
+static void link_log_cb(void *userdata, const char *func, const char *msg)
+{
+	(void)userdata;
+	logit(LOG_DEBUG, "%s():%s", func, msg);
+}
+
 static void peer_drop(struct peer *p)
 {
 	int was_sysbus = p == sysbus_peer;
@@ -1522,6 +1531,8 @@ int dbus_init(uev_ctx_t *ctx)
 	/* Same access policy as INIT_SOCKET: the bus reaches every
 	 * service operation initctl does, so --with-group has to gate
 	 * both or it gates neither. */
+	link_set_logger(link_log_cb, NULL);
+
 	if (link_server_new(&server, FINIT_BUS_SOCKET, 0660) < 0) {
 		err(1, "Failed binding D-Bus socket %s", FINIT_BUS_SOCKET);
 		return 1;

@@ -60,6 +60,7 @@ int link_server_new(link_server_t **out, const char *path, mode_t mode)
 	 * permissive.  Who may connect is the caller's policy to set;
 	 * per-method authorization happens later in dispatch via
 	 * SO_PEERCRED. */
+	__dbg("binding %s, mode %04o", path, (unsigned)mode);
 	{
 		mode_t oldmask = umask(0777 & ~mode);
 		int    rc      = bind(fd, (struct sockaddr *)&sun, sizeof(sun));
@@ -159,6 +160,7 @@ int link_server_accept(link_server_t *srv, link_connection_t **out)
 
 	__auth_generate_guid(conn->guid);
 
+	__dbg("new peer on fd %d, uid %d", cfd, (int)conn->peer_uid);
 
 	*out = conn;
 	return 0;
@@ -216,6 +218,8 @@ link_connection_t *link_server_attach(link_server_t *srv, int fd, uid_t peer_uid
 	conn->broker   = !!(attach_flags & LINK_ATTACH_BROKER);
 	__auth_generate_guid(conn->guid);
 
+	__dbg("attached %s peer on fd %d, uid %d",
+	      conn->broker ? "broker" : "external", fd, (int)peer_uid);
 
 	return conn;
 

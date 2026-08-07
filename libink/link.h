@@ -88,6 +88,20 @@ typedef struct {
 	size_t         body_len;
 } link_reply_t;
 
+/* ----------  debug tracing  ---------- */
+
+/* Receives one line per connection, method call, and authorization
+ * decision.  `func` is the libink function that emitted it, so a host
+ * can format it the way it formats its own traces.
+ *
+ * With no logger installed, the default, a trace point costs one NULL
+ * test.  With one installed the message is formatted before the host
+ * sees it, so a host that only wants tracing sometimes should install
+ * and remove the callback rather than discard by level. */
+typedef void (*link_log_cb_t)(void *userdata, const char *func, const char *msg);
+
+void link_set_logger(link_log_cb_t cb, void *userdata);
+
 /* ----------  caller identity on a broker connection  ---------- */
 
 /* Handle for a call parked while its caller is identified.  Opaque,
