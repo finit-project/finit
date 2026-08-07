@@ -1201,9 +1201,27 @@ void dbus_notify_condition_change(const char *name, const char *state)
  * rather log than silently sit in the queue). */
 #define DBUS_NAME_FLAG_DO_NOT_QUEUE  0x04
 
+/* sysbus_probe() re-runs on every service and condition change, so a
+ * broker that keeps refusing would repeat itself for every event, and
+ * before syslog is up each line is an open/write/close on /dev/kmsg.
+ * Say it once, then trace, until an attach succeeds. */
+static int sysbus_warned;
+
+#define sysbus_level() (sysbus_warned ? LOG_DEBUG : LOG_WARNING)
+
+/* What the broker said, for the log.  A refused call carries an error
+ * name; anything that failed below that has nothing to quote. */
+static const char *sysbus_errstr(link_client_t *c)
+{
+	const link_reply_t *r = link_client_reply(c);
+
+	return (r && r->error_name) ? r->error_name : "transport or parse failure";
+}
+
 static int sysbus_request_name(link_client_t *c)
 {
-	uint32_t result = 0;
+	const char *reason;
+	uint32_t result;
 	int rc;
 
 	rc = link_client_call_v(c, "/org/freedesktop/DBus",
@@ -1211,11 +1229,19 @@ static int sysbus_request_name(link_client_t *c)
 				"su", FINIT_BUS_NAME,
 				(uint32_t)DBUS_NAME_FLAG_DO_NOT_QUEUE);
 	if (rc != LINK_CALL_OK)
-		return -1;
-	if (link_reply_get_u32(link_client_reply(c), &result) < 0)
-		return -1;
-	/* 1 = primary owner; 2/3/4 mean we didn't get the name */
-	return (result == 1) ? 0 : -1;
+		reason = sysbus_errstr(c);
+	else if (link_reply_get_u32(link_client_reply(c), &result) < 0)
+		reason = "malformed RequestName reply";
+	else if (result != 1)	/* 2/3/4 mean we did not get the name */
+		reason = "name already owned";
+	else
+		return 0;
+
+	logit(sysbus_level(), "Failed to claim %s on system bus: %s",
+	      FINIT_BUS_NAME, reason);
+	sysbus_warned = 1;
+
+	return -1;
 }
 
 static int try_attach_system_bus(uev_ctx_t *ctx)
@@ -1232,16 +1258,21 @@ static int try_attach_system_bus(uev_ctx_t *ctx)
 		return -1;
 	}
 
+	/* Unlike the local bus, a broker routes by destination, and it
+	 * drops anything not addressed to the driver before Hello. */
+	link_client_set_destination(c, "org.freedesktop.DBus");
+
 	rc = link_client_call_v(c, "/org/freedesktop/DBus",
 				"org.freedesktop.DBus", "Hello", NULL);
 	if (rc != LINK_CALL_OK) {
-		dbg("System-bus Hello failed (rc=%d); skipping", rc);
+		logit(sysbus_level(), "System-bus Hello failed: %s",
+		      sysbus_errstr(c));
+		sysbus_warned = 1;
 		link_client_close(c);
 		return -1;
 	}
 
 	if (sysbus_request_name(c) < 0) {
-		logit(LOG_WARNING, "Failed to claim %s on system bus", FINIT_BUS_NAME);
 		link_client_close(c);
 		return -1;
 	}
@@ -1260,6 +1291,7 @@ static int try_attach_system_bus(uev_ctx_t *ctx)
 	}
 
 	sysbus_peer = p;
+	sysbus_warned = 0;	/* arm the warning for a later broker restart */
 	logit(LOG_NOTICE, "Registered %s on system bus", FINIT_BUS_NAME);
 	return 0;
 }
