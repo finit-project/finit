@@ -204,20 +204,31 @@ conditions belong to Finit's state machine.
 Authorization
 -------------
 
-Privileged methods reject any caller whose peer `uid` isn't 0.  On the
-**local** bus the kernel's `SO_PEERCRED` socket option tells Finit exactly
-who's calling, so privilege escalation through the bus is impossible.
+Privileged methods accept `root`, and any caller belonging to the group given
+to `--with-group` at build time.  That is the same set the socket mode already
+admits, so the two gates agree instead of the socket letting the group in and
+every method turning it away.
 
-On the **system** bus, all incoming traffic is treated as unprivileged: it
-arrives through `dbus-daemon` (typically running as root) and Finit cannot yet
-ask the daemon for the real requester's uid via `GetConnectionUnixUser`.  This
-means external tooling can freely `Get`/`Introspect`/`ListServices`, but every
-state-changing method returns `org.freedesktop.DBus.Error.AccessDenied`.
-Per-sender uid lookup is on the roadmap.
+On the **local** bus the kernel decides this at `connect()`, supplementary
+groups included, and `SO_PEERCRED` tells Finit exactly who is calling, so
+privilege escalation through the bus is impossible.
+
+On the **system** bus one connection carries every caller, so `SO_PEERCRED`
+describes `dbus-daemon` rather than whoever asked.  For a privileged method
+Finit asks the bus driver `GetConnectionUnixUser` about the message sender and
+holds the call until the answer arrives.  Nothing blocks: the reply comes back
+through the same event loop as everything else, and the held call is then
+dispatched or refused on its merits.
+
+Answers are cached per sender.  A bus never reuses a unique name while it
+runs, so an answer holds for as long as that bus does; Finit empties the cache
+when the broker goes away, since a new one numbers its clients from scratch.
+A caller Finit cannot identify is refused, so the failure mode is a denial
+rather than an escalation.
 
 When a privileged method is rejected the error name is exactly
 `org.freedesktop.DBus.Error.AccessDenied`, and the body carries a short reason
-string (e.g. `"permission denied: Start requires root"`).
+string.
 
 `initctl` integration
 ---------------------

@@ -72,6 +72,7 @@ EXTRA_DIST		+= signal-service.sh
 EXTRA_DIST		+= testserv.sh
 EXTRA_DIST		+= unexpected-restart.sh
 EXTRA_DIST		+= dbus-auth.sh
+EXTRA_DIST		+= dbus-authz.sh
 EXTRA_DIST		+= dbus-bus.sh
 EXTRA_DIST		+= dbus-manager.sh
 EXTRA_DIST		+= dbus-service.sh
@@ -135,6 +136,7 @@ endif
 TESTS			+= unexpected-restart.sh
 if DBUS
 TESTS			+= dbus-auth.sh
+TESTS			+= dbus-authz.sh
 TESTS			+= dbus-bus.sh
 TESTS			+= dbus-manager.sh
 TESTS			+= dbus-service.sh

@@ -31,6 +31,9 @@
 #ifdef HAVE_DBUS
 
 #include <errno.h>
+#include <grp.h>
+#include <limits.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +71,7 @@ static size_t             peer_count;
 static struct peer        *sysbus_peer;
 
 static void sysbus_probe(void);
+static void sender_cache_flush(void);
 
 static void peer_drop(struct peer *p)
 {
@@ -79,9 +83,13 @@ static void peer_drop(struct peer *p)
 	peer_count--;
 	free(p);
 
-	/* broker gone; the notify paths probe for its return */
-	if (was_sysbus)
+	/* broker gone; the notify paths probe for its return.  Its unique
+	 * names die with it, so nothing we learned about them is safe to
+	 * carry over to whatever takes its place. */
+	if (was_sysbus) {
 		sysbus_peer = NULL;
+		sender_cache_flush();
+	}
 }
 
 static void peer_cb(uev_t *w, void *arg, int events)
@@ -1171,6 +1179,176 @@ void dbus_notify_condition_change(const char *name, const char *state)
 			 "ConditionChanged", "ss", body, (size_t)blen);
 }
 
+/* ---------- who may change things ----------
+ *
+ * Root, or a member of the group the bus socket is owned by, which is
+ * the same set --with-group already lets connect.  Both gates then say
+ * the same thing, rather than the socket admitting the wheel group and
+ * every method turning it away.
+ *
+ * On the local bus the kernel already made this decision at connect(),
+ * supplementary groups and all, so the lookup only confirms it.  The
+ * system bus has no socket mode to lean on, which is why we ask here
+ * rather than trusting the connection.
+ *
+ * Deliberately uncached: /etc/group changes while Finit runs, and a
+ * privileged call is an operator action, not a hot path.
+ */
+static int caller_is_privileged(uid_t uid, void *userdata)
+{
+	(void)userdata;
+
+	if (uid == 0)
+		return 1;
+
+#ifndef ENABLE_STATIC
+	{
+		gid_t groups[NGROUPS_MAX];
+		int   ngroups = NGROUPS_MAX;
+		struct passwd *pw;
+		int    gid, i;
+
+		gid = getgroup(DEFGROUP);
+		if (gid < 0)
+			return 0;
+
+		pw = getpwuid(uid);
+		if (!pw)
+			return 0;
+
+		if (getgrouplist(pw->pw_name, pw->pw_gid, groups, &ngroups) < 0)
+			return 0;
+
+		for (i = 0; i < ngroups; i++) {
+			if (groups[i] == (gid_t)gid)
+				return 1;
+		}
+	}
+#endif
+
+	return 0;
+}
+
+/* ---------- caller identity on the system bus ----------
+ *
+ * libink parks a privileged call and asks us who sent it; we ask the
+ * bus driver with GetConnectionUnixUser and answer when the reply
+ * lands, through the same event loop as everything else.
+ *
+ * A bus never reuses a unique name, so an answer holds for as long as
+ * that bus runs.  It does not survive the bus restarting, though:
+ * a new dbus-daemon numbers from scratch and :1.7 becomes somebody
+ * else, so peer_drop() empties the cache when the broker goes.
+ *
+ * It is a ring: the oldest entry loses on overflow, and losing one
+ * only costs another round trip.
+ */
+#define SENDER_CACHE_LEN 16
+
+struct sender_uid {
+	char  name[LINK_SENDER_MAX];
+	uid_t uid;
+};
+
+static struct sender_uid sender_cache[SENDER_CACHE_LEN];
+static unsigned          sender_next;
+
+static void sender_cache_flush(void)
+{
+	memset(sender_cache, 0, sizeof(sender_cache));
+	sender_next = 0;
+}
+
+static int sender_cached(const char *sender, uid_t *uid)
+{
+	int i;
+
+	for (i = 0; i < SENDER_CACHE_LEN; i++) {
+		if (sender_cache[i].name[0] && !strcmp(sender_cache[i].name, sender)) {
+			*uid = sender_cache[i].uid;
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static void sender_remember(const char *sender, uid_t uid)
+{
+	unsigned i = sender_next++ % SENDER_CACHE_LEN;
+
+	strlcpy(sender_cache[i].name, sender, sizeof(sender_cache[i].name));
+	sender_cache[i].uid = uid;
+}
+
+/* One outstanding GetConnectionUnixUser.  Freed by the reply callback,
+ * which libink guarantees to run exactly once, with a NULL reply if
+ * the connection drops first. */
+struct uid_query {
+	link_authz_t tok;
+	char         sender[LINK_SENDER_MAX];
+};
+
+static void uid_reply_cb(link_connection_t *conn, const link_reply_t *reply, void *userdata)
+{
+	struct uid_query *q = userdata;
+	uid_t             uid = (uid_t)-1;
+	uint32_t          val;
+
+	(void)conn;
+
+	if (!reply) {
+		dbg("connection dropped before %s was identified", q->sender);
+	} else if (reply->type == LINK_MSG_METHOD_RETURN &&
+		   link_reply_get_u32(reply, &val) == 0) {
+		uid = (uid_t)val;
+		sender_remember(q->sender, uid);
+		dbg("sender %s is uid %d", q->sender, (int)uid);
+	} else {
+		dbg("GetConnectionUnixUser(%s) failed: %s", q->sender,
+		    reply->error_name ? reply->error_name : "unexpected reply");
+	}
+
+	link_uid_resolved(server, q->tok, uid);
+	free(q);
+}
+
+static int sysbus_uid_resolver(link_connection_t *conn, const char *sender,
+			       link_authz_t tok, uid_t *uid, void *userdata)
+{
+	struct uid_query *q;
+
+	(void)userdata;
+
+	/* Never truncate: a shortened key could match a different
+	 * sender and hand it someone else's privileges. */
+	if (strlen(sender) >= LINK_SENDER_MAX)
+		return -1;
+
+	if (sender_cached(sender, uid)) {
+		dbg("sender %s is uid %d, from cache", sender, (int)*uid);
+		return 0;
+	}
+
+	dbg("asking the bus driver who %s is ...", sender);
+
+	q = calloc(1, sizeof(*q));
+	if (!q)
+		return -1;
+	q->tok = tok;
+	strlcpy(q->sender, sender, sizeof(q->sender));
+
+	if (link_connection_call(conn, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+				 "org.freedesktop.DBus", "GetConnectionUnixUser",
+				 uid_reply_cb, q, "s", sender) < 0) {
+		dbg("Failed asking the bus driver about %s: %s", sender, strerror(errno));
+		free(q);
+		return -1;
+	}
+
+	return 1;	/* parked; uid_reply_cb() answers */
+}
+
 /* ---------- system-bus attach (opportunistic) ----------
  *
  * If /var/run/dbus/system_bus_socket is reachable, libink connects to
@@ -1179,10 +1357,9 @@ void dbus_notify_condition_change(const char *name, const char *state)
  * peer so the same vtables serve incoming method calls and outgoing
  * signal fan-out reaches the system bus.
  *
- * peer_uid is set to (uid_t)-1 so LINK_METHOD_PRIVILEGED methods
- * reject by default -- per-request sender uid lookup via
- * GetConnectionUnixUser is a follow-up.  Read-only methods
- * (ListServices, Properties.Get, Introspect, ...) work as expected.
+ * peer_uid is (uid_t)-1 because the connection has no single owner;
+ * who is calling is established per message by sysbus_uid_resolver()
+ * below.
  *
  * A bounded SO_SNDTIMEO/SO_RCVTIMEO budget is applied via
  * link_client_open_timeout so a hung dbus-daemon can't stall boot;
@@ -1292,6 +1469,7 @@ static int try_attach_system_bus(uev_ctx_t *ctx)
 	}
 
 	sysbus_peer = p;
+	link_server_set_uid_resolver(server, sysbus_uid_resolver, NULL);
 	sysbus_warned = 0;	/* arm the warning for a later broker restart */
 	logit(LOG_NOTICE, "Registered %s on system bus", FINIT_BUS_NAME);
 	return 0;
@@ -1351,6 +1529,8 @@ int dbus_init(uev_ctx_t *ctx)
 
 	if (chown(FINIT_BUS_SOCKET, geteuid(), getgroup(DEFGROUP)))
 		err(1, "Failed setting group %s on %s", DEFGROUP, FINIT_BUS_SOCKET);
+
+	link_server_set_authorizer(server, caller_is_privileged, NULL);
 
 	if (link_server_add_object(server, "/org/finit/manager",
 				  &manager_vtable, NULL) < 0) {
