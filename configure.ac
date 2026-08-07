@@ -161,7 +161,7 @@ AC_ARG_WITH(sysconfig,
 	[sysconfig=$withval], [sysconfig=default])
 
 AC_ARG_WITH(group,
-	AS_HELP_STRING([--with-group=NAME], [Group for /run/finit/socket (initctl), default: root]),
+	AS_HELP_STRING([--with-group=NAME], [Group for /run/finit/socket and /run/finit/bus, default: root]),
 	[group=$withval], [group=root])
 
 AC_ARG_WITH(hostname,
@@ -298,7 +298,7 @@ AS_IF([test "x$with_heading" != "xno"], [
 AS_IF([test "x$with_group" != "xno"], [
 	AS_IF([test "x$group" = "xyes"], [
 		group=root])])
-AC_DEFINE_UNQUOTED(DEFGROUP, "$group", [For /run/finit/socket])
+AC_DEFINE_UNQUOTED(DEFGROUP, "$group", [For /run/finit/socket and /run/finit/bus])
 
 AS_IF([test "x$with_hostname" != "xno"], [
 	AS_IF([test "x$hostname" = "xyes"], [

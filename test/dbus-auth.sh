@@ -14,9 +14,15 @@ TEST_DIR=$(dirname "$0")
 # shellcheck source=/dev/null
 . "$TEST_DIR/lib/dbus-setup.sh"
 
-say "Socket mode is 0666"
+# The bus reaches every service operation initctl does, so it has to
+# be gated like INIT_SOCKET: 0660, owned by root and the --with-group
+# group.  Only the mode is asserted here, the test namespace does not
+# enforce it -- a setuid() client still connects to a 0660 socket.
+say "Socket is gated like INIT_SOCKET, not world-accessible"
 mode=$(texec stat -c %a "$BUS")
-assert "Socket mode is 666 (got $mode)" "$mode" = "666"
+sock=$(texec stat -c %a /run/finit/socket)
+assert "Socket mode is 660 (got $mode)" "$mode" = "660"
+assert "Bus and INIT_SOCKET agree ($mode vs $sock)" "$mode" = "$sock"
 
 say "AUTH EXTERNAL: claim correct UID (root = 0)"
 reply=$(texec "$CLIENT" auth "$BUS" 0)

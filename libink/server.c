@@ -22,7 +22,7 @@ static void close_save_errno(int fd)
 	errno = saved;
 }
 
-int link_server_new(link_server_t **out, const char *path)
+int link_server_new(link_server_t **out, const char *path, mode_t mode)
 {
 	struct sockaddr_un sun = { .sun_family = AF_UNIX };
 	link_server_t *srv;
@@ -55,12 +55,13 @@ int link_server_new(link_server_t **out, const char *path)
 
 	/* fchmod() on a Unix-domain socket fd is a silent no-op on Linux:
 	 * the file mode is fixed at bind() time as (0777 & ~umask).  Set
-	 * umask around the bind() so the socket appears with mode 0666
-	 * atomically, no race window.  World-accessible by design;
+	 * umask around the bind() so the socket appears with the mode the
+	 * caller asked for atomically, with no window where it is more
+	 * permissive.  Who may connect is the caller's policy to set;
 	 * per-method authorization happens later in dispatch via
 	 * SO_PEERCRED. */
 	{
-		mode_t oldmask = umask(0111);
+		mode_t oldmask = umask(0777 & ~mode);
 		int    rc      = bind(fd, (struct sockaddr *)&sun, sizeof(sun));
 		int    saved   = errno;
 

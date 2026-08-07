@@ -90,7 +90,11 @@ typedef struct {
 
 /* ----------  server / connection lifecycle  ---------- */
 
-int   link_server_new   (link_server_t **server, const char *path);
+/* Bind a listening socket at `path` with file mode `mode`, e.g. 0660
+ * to keep it to root and one group.  The mode is applied at bind(),
+ * so the socket is never briefly more permissive than asked; setting
+ * the owning group afterwards is the caller's job. */
+int   link_server_new   (link_server_t **server, const char *path, mode_t mode);
 void  link_server_free  (link_server_t  *server);
 int   link_server_get_fd(const link_server_t *server);
 

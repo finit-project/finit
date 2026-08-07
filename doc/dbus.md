@@ -27,6 +27,12 @@ Unix-domain socket using the standard D-Bus SASL EXTERNAL handshake.  No
 `dbus-daemon` is required, which makes it suitable for embedded systems that
 don't ship one.
 
+The socket is `0660`, owned by `root` and the group given to
+`--with-group` at build time, the same gate as `/run/finit/socket` that
+`initctl` falls back on.  The bus reaches every operation `initctl`
+does, so restricting one and not the other would leave the door open.
+Members of that group may use it, see [Authorization](#authorization).
+
 The **system** bus is best-effort: Finit probes for a running `dbus-daemon`
 and, when reachable, claims the well-known name `org.finit` so that standard
 tooling sees Finit just like any other system service:

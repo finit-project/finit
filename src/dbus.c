@@ -1341,10 +1341,16 @@ int dbus_init(uev_ctx_t *ctx)
 {
 	dbg("Setting up D-Bus listening socket at %s ...", FINIT_BUS_SOCKET);
 
-	if (link_server_new(&server, FINIT_BUS_SOCKET) < 0) {
+	/* Same access policy as INIT_SOCKET: the bus reaches every
+	 * service operation initctl does, so --with-group has to gate
+	 * both or it gates neither. */
+	if (link_server_new(&server, FINIT_BUS_SOCKET, 0660) < 0) {
 		err(1, "Failed binding D-Bus socket %s", FINIT_BUS_SOCKET);
 		return 1;
 	}
+
+	if (chown(FINIT_BUS_SOCKET, geteuid(), getgroup(DEFGROUP)))
+		err(1, "Failed setting group %s on %s", DEFGROUP, FINIT_BUS_SOCKET);
 
 	if (link_server_add_object(server, "/org/finit/manager",
 				  &manager_vtable, NULL) < 0) {
