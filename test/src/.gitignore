@@ -3,3 +3,4 @@
 /.libs/
 /.deps/
 /serv
+/dbus-auth-client

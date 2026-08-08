@@ -12,6 +12,8 @@ AC_CONFIG_FILES([Makefile
 	contrib/debian/Makefile contrib/debian/finit.d/Makefile contrib/debian/finit.d/available/Makefile
 	contrib/void/Makefile   contrib/void/finit.d/Makefile   contrib/void/finit.d/available/Makefile
 	doc/Makefile doc/config/Makefile
+	dbus-1/Makefile
+	libink/Makefile
 	libsystemd/Makefile libsystemd/libsystemd.pc
 	man/Makefile
 	plugins/Makefile
@@ -94,6 +96,10 @@ AC_ARG_ENABLE(logrotate,
         AS_HELP_STRING([--disable-logrotate], [Disable built-in rotation of /var/log/wtmp]),,[
 	enable_logrotate=yes])
 
+AC_ARG_ENABLE(dbus,
+        AS_HELP_STRING([--disable-dbus], [Disable D-Bus support (libink + Finit object tree)]),,[
+	enable_dbus=yes])
+
 AC_ARG_ENABLE(doc,
         AS_HELP_STRING([--disable-doc], [Disable build and install of doc/ section]),,[
 	enable_doc=yes])
@@ -155,7 +161,7 @@ AC_ARG_WITH(sysconfig,
 	[sysconfig=$withval], [sysconfig=default])
 
 AC_ARG_WITH(group,
-	AS_HELP_STRING([--with-group=NAME], [Group for /run/finit/socket (initctl), default: root]),
+	AS_HELP_STRING([--with-group=NAME], [Group for /run/finit/socket and /run/finit/bus, default: root]),
 	[group=$withval], [group=root])
 
 AC_ARG_WITH(hostname,
@@ -243,6 +249,10 @@ AS_IF([test "x$enable_rescue" != "xno"], [
 
 AM_CONDITIONAL(LOGROTATE, [test "x$enable_logrotate" = "xyes"])
 
+AS_IF([test "x$enable_dbus" = "xyes"], [
+	AC_DEFINE(HAVE_DBUS, 1, [Build D-Bus support via libink])])
+AM_CONDITIONAL(DBUS, [test "x$enable_dbus" = "xyes"])
+
 ### With features ##############################################################################
 AS_IF([test "x$bash_dir" = "xyes"], [
 	PKG_CHECK_MODULES([BASH_COMPLETION], [bash-completion >= 2.0],
@@ -288,7 +298,7 @@ AS_IF([test "x$with_heading" != "xno"], [
 AS_IF([test "x$with_group" != "xno"], [
 	AS_IF([test "x$group" = "xyes"], [
 		group=root])])
-AC_DEFINE_UNQUOTED(DEFGROUP, "$group", [For /run/finit/socket])
+AC_DEFINE_UNQUOTED(DEFGROUP, "$group", [For /run/finit/socket and /run/finit/bus])
 
 AS_IF([test "x$with_hostname" != "xno"], [
 	AS_IF([test "x$hostname" = "xyes"], [
@@ -438,6 +448,7 @@ Optional features:
   Built-in sulogin......: $with_sulogin $sulogin
   Built-in watchdogd....: $with_watchdog $watchdog
   Built-in logrotate....: $enable_logrotate
+  D-Bus support (libink): $enable_dbus
   Replacement libsystemd: $with_libsystemd
   Use cgroup v2.........: $enable_cgroup
   Use libcap............: $enable_libcap

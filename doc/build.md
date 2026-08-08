@@ -50,9 +50,16 @@ Below are a few of the main switches to configure:
   `/proc/cmdline`, this is *not recommended* since Finit may be running as the
   init for container apps that can see the host's `/proc` filesystem
 
+* `--disable-dbus`: Opt out of Finit's built-in D-Bus support, enabled by
+  default.  See [D-Bus Integration](dbus.md) for what it provides.  Not to
+  be confused with `--enable-dbus-plugin` below, which only starts an
+  external `dbus-daemon`
+
 * `--enable-alsa-utils-plugin`: Enable the optional `alsa-utils.so` sound plugin.
 
-* `--enable-dbus-plugin`: Enable the optional D-Bus `dbus.so` plugin.
+* `--enable-dbus-plugin`: Enable the optional D-Bus `dbus.so` plugin, which
+  launches `dbus-daemon` at boot.  Unrelated to the built-in bus, see
+  `--disable-dbus` above.
 
 * `--enable-resolvconf-plugin`: Enable the `resolvconf.so` optional plugin.
 

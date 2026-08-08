@@ -330,7 +330,6 @@ export SYSROOT
 top_builddir="${top_builddir:-$TEST_DIR/..}"
 sysroot_finit="$SYSROOT/sbin/finit"
 built_finit="$top_builddir/src/finit"
-[ -x "$top_builddir/src/.libs/finit" ] && built_finit="$top_builddir/src/.libs/finit"
 
 if [ -x "$built_finit" ] && [ -e "$sysroot_finit" ] && ! cmp -s "$built_finit" "$sysroot_finit"; then
 	fail "Stale $sysroot_finit, run 'make -C test setup-chroot' or use 'make check'"

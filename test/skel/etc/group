@@ -1,4 +1,4 @@
-root:x:0:
+root:x:0:wheelie
 daemon:x:1:
 bin:x:2:
 sys:x:3:
@@ -7,3 +7,4 @@ tty:x:5:
 disk:x:6:
 dialout:x:20:
 nogroup:x:65534:
+wheelie:x:1000:

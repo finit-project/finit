@@ -41,6 +41,13 @@
 #include "service.h"
 #include "cgutil.h"
 #include "utmp-api.h"
+#ifdef HAVE_DBUS
+#include "link.h"
+#include "path.h"
+#endif
+
+/* Used by both do_cond_act and (with HAVE_DBUS) cond_dbus_call. */
+typedef enum { COND_CLR, COND_SET, COND_GET } condop_t;
 
 struct cmd {
 	char        *cmd;
@@ -71,7 +78,6 @@ int utmp     = 0;
 int iw, pw;
 
 extern int reboot_main(int argc, char *argv[]);
-
 
 /* figure ut width of IDENT and PID columns */
 static void col_widths(void)
@@ -145,6 +151,11 @@ static int runlevel_get(int *prevlevel)
 	return rc;
 }
 
+#ifdef HAVE_DBUS
+static int try_dbus_manager(const char *method, const char *arg_sig,
+			    const char *arg);
+#endif
+
 static int toggle_debug(char *arg)
 {
 	struct init_request rq = {
@@ -152,24 +163,22 @@ static int toggle_debug(char *arg)
 		.cmd = INIT_CMD_DEBUG,
 	};
 
+	(void)arg;
+#ifdef HAVE_DBUS
+	{
+		int rc = try_dbus_manager("SetDebug", "", NULL);
+		if (rc >= 0) return rc;
+	}
+#endif
 	return client_send(&rq, sizeof(rq));
 }
 
-static int do_log(svc_t *svc, char *tail)
+static int do_log_named(const char *nm, pid_t pid, char *tail)
 {
 	const char *logfile = "/var/log/syslog";
-	pid_t pid;
-	char *nm;
 
-	if (svc) {
-		nm = svc_ident(svc, NULL, 0);
-		pid = svc->pid;
-		if (!pid)
-			return 0; /* not running */
-	} else {
-		nm  = "finit";
-		pid = 1;
-	}
+	if (!pid)
+		return 0; /* not running */
 
 	if (!fexist(logfile)) {
 		logfile = "/var/log/messages";
@@ -178,6 +187,13 @@ static int do_log(svc_t *svc, char *tail)
 	}
 
 	return systemf("cat %s | grep '\\[%d\\]\\|%s' %s", logfile, pid, nm, tail);
+}
+
+static int do_log(svc_t *svc, char *tail)
+{
+	if (svc)
+		return do_log_named(svc_ident(svc, NULL, 0), svc->pid, tail);
+	return do_log_named("finit", 1, tail);
 }
 
 static int show_log(char *arg)
@@ -193,6 +209,86 @@ static int show_log(char *arg)
 	return do_log(svc, "");
 }
 
+#ifdef HAVE_DBUS
+/*
+ * Advance one a{sv} dict entry: key + variant type; the caller reads
+ * the value with the link_r_* matching `type`.
+ */
+static int dbus_dict_next(link_reader_t *r, const char **key, char *type)
+{
+	if (link_r_align(r, 8) < 0)
+		return -1;
+	if (link_r_string(r, key) < 0)
+		return -1;
+	return link_r_variant_begin(r, type);
+}
+
+/* Fetch all org.finit.Manager1 string properties in one Properties.GetAll
+ * round-trip, then pick out a subset.  `wanted` is a NULL-terminated array
+ * of property names; `out` parallel-receives the values (each entry left
+ * untouched if its property wasn't returned).  Returns 0 on transport
+ * success (even if some properties weren't present), -1 on transport or
+ * parse failure. */
+static int dbus_get_manager_props(const char *const *wanted, char **out, size_t out_sz)
+{
+	link_client_t *c;
+	const link_reply_t *r;
+	link_reader_t reader;
+	size_t         end;
+	int            rc;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	rc = link_client_call_v(c, "/org/finit/manager",
+				"org.freedesktop.DBus.Properties", "GetAll",
+				"s", "org.finit.Manager1");
+	if (rc != LINK_CALL_OK) {
+		link_client_close(c);
+		return -1;
+	}
+
+	r = link_client_reply(c);
+	if (!r || !r->body) {
+		link_client_close(c);
+		return -1;
+	}
+
+	link_reader_init(&reader, r->body, r->body_len);
+	if (link_r_array_begin(&reader, &end) < 0) {
+		link_client_close(c);
+		return -1;
+	}
+
+	while (link_r_pos(&reader) < end) {
+		const char *key  = NULL;
+		const char *val  = NULL;
+		char        type;
+		size_t i;
+
+		if (dbus_dict_next(&reader, &key, &type) < 0)
+			goto fail;
+		if (type != 's' || link_r_string(&reader, &val) < 0)
+			goto fail;
+
+		for (i = 0; wanted[i]; i++) {
+			if (!strcmp(key, wanted[i])) {
+				strlcpy(out[i], val, out_sz);
+				break;
+			}
+		}
+	}
+
+	link_client_close(c);
+	return 0;
+fail:
+	link_client_close(c);
+	return -1;
+}
+
+#endif
+
 static int do_runlevel(char *arg)
 {
 	struct init_request rq = {
@@ -204,6 +300,19 @@ static int do_runlevel(char *arg)
 		int prevlevel = 0;
 		int currlevel;
 		char prev, curr;
+
+#ifdef HAVE_DBUS
+		char curr_buf[16] = { 0 }, prev_buf[16] = { 0 };
+		const char *const wanted[] = { "Runlevel", "PrevRunlevel", NULL };
+		char *out[] = { curr_buf, prev_buf };
+
+		if (dbus_get_manager_props(wanted, out, sizeof(curr_buf)) == 0 &&
+		    curr_buf[0] && prev_buf[0]) {
+			/* already in runlevel(8) encoding: digits, S, N */
+			printf("%s %s\n", prev_buf, curr_buf);
+			return 0;
+		}
+#endif
 
 		currlevel = runlevel_get(&prevlevel);
 		switch (currlevel) {
@@ -268,19 +377,279 @@ static int do_startstop(int cmd, char *arg)
 	return do_svc(cmd, arg);
 }
 
-static int do_start  (char *arg) { return do_startstop(INIT_CMD_START_SVC,   arg); }
-static int do_stop   (char *arg) { return do_startstop(INIT_CMD_STOP_SVC,    arg); }
+#ifdef HAVE_DBUS
+
+/* Map a LINK_CALL_ERROR reply on `c` to the appropriate ERRX exit:
+ *    org.finit.Error.NoSuchService      -> exit 69 (legacy "no such svc")
+ *    org.freedesktop.DBus.Error.AccessDenied -> exit 1 (permission denied)
+ *    anything else                       -> exit 1 (method: err)
+ * `c` is closed before exit either way.  Use exact-match on the
+ * fully-qualified error name; a substring match would misfire on a
+ * future name that contained one of these as a prefix. */
+static void map_dbus_err(link_client_t *c, const char *method, const char *ident)
+{
+	const link_reply_t *r = link_client_reply(c);
+	char err[128];
+
+	/* The reply view points into c->rxbuf; copy the error name out
+	 * before link_client_close() frees the client.  Otherwise the
+	 * strcmps below read freed memory. */
+	if (r && r->error_name)
+		strlcpy(err, r->error_name, sizeof(err));
+	else
+		err[0] = '\0';
+	link_client_close(c);
+
+	if (!strcmp(err, "org.finit.Error.NoSuchService"))
+		ERRX(noerr ? 0 : 69, "no such task or service(s): %s",
+		     ident ? ident : "");
+	if (!strcmp(err, "org.freedesktop.DBus.Error.AccessDenied"))
+		ERRX(1, "permission denied: %s requires root", method);
+	ERRX(1, "%s: %s", method, *err ? err : "D-Bus error");
+}
+
+/* Try the D-Bus path for a Manager1 method.  Returns:
+ *    0  succeeded via D-Bus
+ *   -1  D-Bus not reachable -- callers should fall back to the
+ *       legacy INIT_SOCKET transport
+ * LINK_CALL_ERROR is handled internally via map_dbus_err (does not
+ * return). */
+static int try_dbus_manager(const char *method, const char *arg_sig,
+			    const char *arg)
+{
+	link_client_t *c;
+	int            rc;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	/* "s" methods take the service identity (arg may be NULL ->
+	 * empty string); void methods pass no body. */
+	if (arg_sig && !strcmp(arg_sig, "s"))
+		rc = link_client_call_v(c, "/org/finit/manager",
+					"org.finit.Manager1", method,
+					"s", arg ? arg : "");
+	else if (!arg_sig || !*arg_sig)
+		rc = link_client_call_v(c, "/org/finit/manager",
+					"org.finit.Manager1", method, NULL);
+	else
+		rc = LINK_CALL_FAIL;
+
+	if (rc == LINK_CALL_ERROR)
+		map_dbus_err(c, method, arg);	/* exits */
+	link_client_close(c);
+	return (rc == LINK_CALL_OK) ? 0 : -1;
+}
+
+/* Build the object path for a service identity, same encoding as the
+ * server side; use instead of a Manager1.GetService round-trip. */
+static int dbus_svc_path(const char *ident, char *path, size_t len)
+{
+	const char *prefix = "/org/finit/service/";
+	size_t plen = strlen(prefix);
+
+	if (!ident || !*ident || plen >= len)
+		return -1;
+	memcpy(path, prefix, plen);
+	return link_path_encode(ident, path + plen, len - plen);
+}
+
+/* Call a void-arg method on Service1 at /org/finit/service/<encoded>.
+ * Same return convention as try_dbus_manager. */
+static int try_dbus_service(const char *method, const char *ident)
+{
+	char path[256];
+	link_client_t *c;
+	int rc;
+
+	if (dbus_svc_path(ident, path, sizeof(path)) < 0)
+		return -1;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	rc = link_client_call_v(c, path, "org.finit.Service1", method, NULL);
+	if (rc == LINK_CALL_ERROR)
+		map_dbus_err(c, method, ident);	/* exits */
+	link_client_close(c);
+	return (rc == LINK_CALL_OK) ? 0 : -1;
+}
+
+/* Try one Cond1.{Get,Set,Clear} call.  On COND_GET success the helper
+ * fills *out_exit with the exit code (0 = on, 1 = off, 255 = flux).
+ * Outcomes:
+ *   1   call succeeded; for GET the result is in *out_exit, for
+ *       SET/CLR the caller loops to the next arg
+ *   0   bus not reachable, or LINK_CALL_FAIL -- *bus is closed/NULLed
+ *       and the caller should drop to the legacy filesystem path
+ *   (LINK_CALL_ERROR exits via ERRX inside the helper)
+ *
+ * `*bus` is borrowed; the helper closes it (and sets NULL) on every
+ * exit path that leaves the bus unusable. */
+static int cond_dbus_call(link_client_t **bus, condop_t op,
+			  const char *arg, int *out_exit)
+{
+	const char *method = (op == COND_GET) ? "Get"
+			   : (op == COND_SET) ? "Set" : "Clear";
+	int rc;
+
+	if (!*bus)
+		return 0;
+
+	rc = link_client_call_v(*bus, "/org/finit/cond",
+				"org.finit.Cond1", method,
+				"s", arg);
+	if (rc == LINK_CALL_OK) {
+		if (op == COND_GET) {
+			const char *state = NULL;
+
+			link_reply_get_string(link_client_reply(*bus), &state);
+			if (verbose && state)
+				puts(state);
+			*out_exit = (state && !strcmp(state, "on"))  ? 0
+				  : (state && !strcmp(state, "off")) ? 1 : 255;
+		}
+		return 1;
+	}
+	if (rc == LINK_CALL_ERROR) {
+		const link_reply_t *r = link_client_reply(*bus);
+		const char *err = (r && r->error_name) ? r->error_name : "";
+
+		link_client_close(*bus);
+		*bus = NULL;
+		if (!strcmp(err, "org.freedesktop.DBus.Error.AccessDenied"))
+			ERRX(1, "permission denied: cond %s requires root", method);
+		ERRX(73, "Failed %s condition <%s>: %s",
+		     op == COND_SET ? "asserting" : "deasserting",
+		     arg, *err ? err : "D-Bus error");
+	}
+	/* LINK_CALL_FAIL */
+	link_client_close(*bus);
+	*bus = NULL;
+	return 0;
+}
+
+/* Subscribe to every signal on the bus and print one line per
+ * incoming message:
+ *     HH:MM:SS interface.member(arg1, arg2, ...)
+ *
+ * Only string-typed leading args are decoded (matches what our two
+ * current signals -- ServiceStateChanged (sss) and ConditionChanged
+ * (ss) -- emit).  Non-string args are silently skipped.  Loops until
+ * the connection drops or the user hits ^C. */
+static int do_monitor(char *arg)
+{
+	link_client_t *c;
+	int            rc;
+
+	(void)arg;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		ERRX(1, "monitor requires the D-Bus socket at %s", FINIT_BUS_SOCKET);
+
+	rc = link_client_call_v(c, "/org/freedesktop/DBus",
+				"org.freedesktop.DBus", "AddMatch",
+				"s", "type='signal'");
+	if (rc != LINK_CALL_OK) {
+		link_client_close(c);
+		ERRX(1, "AddMatch failed (rc=%d)", rc);
+	}
+
+	for (;;) {
+		const link_reply_t *r;
+		link_reader_t       reader;
+		char                ts[16];
+		time_t              now;
+		struct tm           tm;
+
+		rc = link_client_wait(c, -1);
+		if (rc < 0) {
+			link_client_close(c);
+			ERRX(1, "bus connection lost");
+		}
+		if (rc > 0)	/* impossible with timeout=-1, but harmless */
+			continue;
+		r = link_client_reply(c);
+		if (!r || r->type != LINK_MSG_SIGNAL)
+			continue;
+
+		now = time(NULL);
+		localtime_r(&now, &tm);
+		strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
+		printf("%s %s.%s(", ts,
+		       r->interface ? r->interface : "?",
+		       r->member    ? r->member    : "?");
+
+		link_reader_init(&reader, r->body, r->body_len);
+		if (r->signature) {
+			const char *p;
+			int         first = 1;
+
+			for (p = r->signature; *p == 's'; p++) {
+				const char *s;
+
+				if (link_r_string(&reader, &s) < 0)
+					break;
+				printf("%s%s", first ? "" : ", ", s);
+				first = 0;
+			}
+		}
+		printf(")\n");
+		fflush(stdout);
+	}
+
+	link_client_close(c);
+	return 0;
+}
+#endif /* HAVE_DBUS */
+
+static int do_start  (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = try_dbus_manager("Start", "s", arg);
+	if (rc >= 0) return rc;
+#endif
+	return do_startstop(INIT_CMD_START_SVC, arg);
+}
+
+static int do_stop   (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = try_dbus_manager("Stop", "s", arg);
+	if (rc >= 0) return rc;
+#endif
+	return do_startstop(INIT_CMD_STOP_SVC, arg);
+}
 
 static int do_reload (char *arg)
 {
-	if (!arg || !arg[0])
+	if (!arg || !arg[0]) {
+#ifdef HAVE_DBUS
+		int rc = try_dbus_manager("Reload", "", NULL);
+		if (rc >= 0) return rc;
+#endif
 		return do_svc(INIT_CMD_RELOAD, NULL);
+	}
 
+#ifdef HAVE_DBUS
+	{
+		int rc = try_dbus_service("Reload", arg);
+		if (rc >= 0) return rc;
+	}
+#endif
 	return do_startstop(INIT_CMD_RELOAD_SVC, arg);
 }
 
 static int do_restart(char *arg)
 {
+#ifdef HAVE_DBUS
+	int rc = try_dbus_manager("Restart", "s", arg);
+	if (rc == 0) return 0;
+	if (rc == 1) ERRX(noerr ? 0 : 7, "failed restarting %s", arg);
+#endif
 	if (do_startstop(INIT_CMD_RESTART_SVC, arg))
 		ERRX(noerr ? 0 : 7, "failed restarting %s", arg);
 
@@ -308,10 +677,6 @@ int do_signal(int argc, char *argv[])
 	if (argc != 2)
 		ERRX(2, "invalid number of arguments to signal");
 
-	strlcpy(rq.data, argv[0], sizeof(rq.data));
-	if (client_send(&rq, sizeof(rq)))
-		ERRX(noerr ? 0 : 69, "no such task or service(s): %s", argv[0]);
-
 	signo = str2sig(argv[1]);
 	if (signo == -1) {
 		const char *errstr = NULL;
@@ -320,6 +685,29 @@ int do_signal(int argc, char *argv[])
 		if (errstr)
 			ERRX(65, "%s signal: %s", errstr, argv[1]);
 	}
+
+#ifdef HAVE_DBUS
+	{
+		link_client_t *c = link_client_open(FINIT_BUS_SOCKET);
+
+		if (c) {
+			int rc = link_client_call_v(c, "/org/finit/manager",
+						    "org.finit.Manager1", "Signal",
+						    "su", argv[0], (uint32_t)signo);
+
+			if (rc == LINK_CALL_ERROR)
+				map_dbus_err(c, "Signal", argv[0]);	/* exits */
+			link_client_close(c);
+			if (rc == LINK_CALL_OK)
+				return 0;
+			/* LINK_CALL_FAIL: drop to legacy */
+		}
+	}
+#endif
+
+	strlcpy(rq.data, argv[0], sizeof(rq.data));
+	if (client_send(&rq, sizeof(rq)))
+		ERRX(noerr ? 0 : 69, "no such task or service(s): %s", argv[0]);
 
 	/* Reuse runlevel for signal number. */
 	rq.magic    = INIT_MAGIC;
@@ -410,8 +798,6 @@ static int do_cond_dump(char *arg)
 	return 0;
 }
 
-typedef enum { COND_CLR, COND_SET, COND_GET } condop_t;
-
 static cond_state_t cond_read(char *path)
 {
 	int now, gen;
@@ -441,6 +827,9 @@ static int do_cond_act(char *args, condop_t op)
 	cond_state_t cstate;
 	char path[256];
 	char *arg;
+#ifdef HAVE_DBUS
+	link_client_t *bus = link_client_open(FINIT_BUS_SOCKET);
+#endif
 
 	if (!args || !args[0])
 		ERRX(2, "Invalid condition (empty)");
@@ -459,6 +848,22 @@ static int do_cond_act(char *args, condop_t op)
 			if (strchr(arg, '.'))
 				ERRX(2, "Invalid condition (periods)");
 		}
+
+#ifdef HAVE_DBUS
+		{
+			int exit_code;
+
+			if (cond_dbus_call(&bus, op, arg, &exit_code)) {
+				if (op == COND_GET) {
+					link_client_close(bus);
+					return exit_code;
+				}
+				arg = strtok(NULL, " \t");
+				continue;
+			}
+			/* bus is NULL now -- drop through to legacy */
+		}
+#endif
 
 		if (strchr(arg, '/'))
 			snprintf(path, sizeof(path), _PATH_COND "%s", arg);
@@ -496,6 +901,10 @@ static int do_cond_act(char *args, condop_t op)
 		arg = strtok(NULL, " \t");
 	}
 
+#ifdef HAVE_DBUS
+	if (bus)
+		link_client_close(bus);
+#endif
 	return 0;
 }
 
@@ -503,16 +912,16 @@ static int do_cond_get(char *arg) { return do_cond_act(arg, COND_GET); }
 static int do_cond_set(char *arg) { return do_cond_act(arg, COND_SET); }
 static int do_cond_clr(char *arg) { return do_cond_act(arg, COND_CLR); }
 
-static char *svc_cond(svc_t *svc, char *buf, size_t len, int ansi)
+static char *cond_string(const char *condstr, char *buf, size_t len, int ansi)
 {
 	char *cond, *conds;
 
 	buf[0] = 0;
 
-	if (!svc->cond[0])
+	if (!condstr || !condstr[0])
 		return buf;
 
-	conds = strdupa(svc->cond);
+	conds = strdupa(condstr);
 	if (!conds)
 		return buf;
 
@@ -562,6 +971,11 @@ static char *svc_cond(svc_t *svc, char *buf, size_t len, int ansi)
 		strlcat(buf, " ]", len);
 
 	return buf;
+}
+
+static char *svc_cond(svc_t *svc, char *buf, size_t len, int ansi)
+{
+	return cond_string(svc->cond, buf, len, ansi);
 }
 
 static int do_cond_show(char *arg)
@@ -643,10 +1057,57 @@ static int do_cmd(int cmd)
 	return 0;
 }
 
-int do_reboot  (char *arg) { return do_cmd(INIT_CMD_REBOOT);   }
-int do_halt    (char *arg) { return do_cmd(INIT_CMD_HALT);     }
-int do_poweroff(char *arg) { return do_cmd(INIT_CMD_POWEROFF); }
-int do_suspend (char *arg) { return do_cmd(INIT_CMD_SUSPEND);  }
+#ifdef HAVE_DBUS
+static int do_reboot_dbus(const char *method)
+{
+	int rc = try_dbus_manager(method, "", NULL);
+
+	if (rc == 0) {
+		sleep(5);	/* match legacy: wait for finit to shut down */
+		return 0;
+	}
+	return rc;	/* 1 = error, -1 = fall back */
+}
+#endif
+
+int do_reboot  (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = do_reboot_dbus("Reboot");
+	if (rc >= 0) return rc;
+#endif
+	return do_cmd(INIT_CMD_REBOOT);
+}
+
+int do_halt    (char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = do_reboot_dbus("Halt");
+	if (rc >= 0) return rc;
+#endif
+	return do_cmd(INIT_CMD_HALT);
+}
+
+int do_poweroff(char *arg)
+{
+#ifdef HAVE_DBUS
+	int rc = do_reboot_dbus("Poweroff");
+	if (rc >= 0) return rc;
+#endif
+	return do_cmd(INIT_CMD_POWEROFF);
+}
+
+int do_suspend(char *arg)
+{
+	(void)arg;
+#ifdef HAVE_DBUS
+	{
+		int rc = try_dbus_manager("Suspend", "", NULL);
+		if (rc >= 0) return rc;
+	}
+#endif
+	return do_cmd(INIT_CMD_SUSPEND);
+}
 
 /**
  * do_switch_root - Switch to a new root filesystem (initramfs only)
@@ -830,7 +1291,6 @@ char *runlevel_string(int currlevel, int levels)
 
 			strlcat(lvl, i == INIT_LEVEL ? "S" : l, sizeof(lvl));
 
-
 			if (!plain && currlevel == i)
 				strlcat(lvl, "\e[0m", sizeof(lvl));
 		} else {
@@ -843,7 +1303,6 @@ char *runlevel_string(int currlevel, int levels)
 		else
 			i++;
 	} while (i < INIT_LEVEL);
-
 
 	strlcat(lvl, "]", sizeof(lvl));
 
@@ -876,23 +1335,9 @@ char *runlevel_arr(int levels)
 	return lvl;
 }
 
-static int missing(svc_t *svc)
+static char *svc_command(svc_t *svc, char *buf, size_t len)
 {
-	if (svc->state == SVC_HALTED_STATE && svc_is_missing(svc))
-		return 1;
-
-	return 0;
-}
-
-static char *svc_command(svc_t *svc, char *buf, size_t len, int ansi)
-{
-	int bold = missing(svc) && ansi;
-
-	if (whichp(svc->cmd))
-		bold = 0;
-
-	strlcpy(buf, bold ? "\e[1m" : "", len);
-	strlcat(buf, svc->cmd, len);
+	strlcpy(buf, svc->cmd, len);
 
 	for (int i = 1; i < MAX_NUM_SVC_ARGS; i++) {
 		if (!svc->args[i][0])
@@ -909,94 +1354,27 @@ static char *svc_command(svc_t *svc, char *buf, size_t len, int ansi)
 		strlcat(buf, cmd, len);
 	}
 
-	strlcat(buf, bold ? "\e[0m" : "", len);
-
 	return buf;
 }
 
-static char *svc_environ(svc_t *svc, char *buf, size_t len, int ansi)
-{
-	int bold = missing(svc);
-
-	if (!ansi || svc_checkenv(svc))
-		bold = 0;
-
-	strlcpy(buf, bold ? "\e[1m" : "", len);
-	strlcat(buf, svc->env, len);
-	strlcat(buf, bold ? "\e[0m" : "", len);
-
-	return buf;
-}
-
-static char *exit_status(svc_t *svc, char *buf, size_t len)
+static char *exit_status_raw(int status, int manual, char *buf, size_t len)
 {
 	int rc, sig;
 	char *str;
 
-	rc = WEXITSTATUS(svc->status);
-	sig = WTERMSIG(svc->status);
+	rc = WEXITSTATUS(status);
+	sig = WTERMSIG(status);
 
-	if (WIFEXITED(svc->status)) {
+	if (WIFEXITED(status)) {
 		str = code2str(rc);
 		snprintf(buf, len, " (code=exited, status=%d%s%s%s)", rc,
 			 str[0] ? "/" : "", str,
-			 svc->manual ? ", manual=yes" : "");
+			 manual ? ", manual=yes" : "");
 	}
-	else if (WIFSIGNALED(svc->status)) {
+	else if (WIFSIGNALED(status)) {
 		str = sig2str(sig);
 		snprintf(buf, len, " (code=signal, status=%d%s%s)", sig, str[0] ? "/" : "", str);
 	}
-
-	return buf;
-}
-
-static char *status(svc_t *svc, int full)
-{
-	static char buf[96];
-	const char *color;
-	char ok[48] = {0};
-	char *s;
-
-	s = svc_status(svc);
-	switch (svc->state) {
-	case SVC_HALTED_STATE:
-		exit_status(svc, ok, sizeof(ok));
-		color = "\e[1m";
-		break;
-
-	case SVC_RUNNING_STATE:
-		color = "\e[1;32m";
-		break;
-
-	case SVC_DONE_STATE:
-		exit_status(svc, ok, sizeof(ok));
-		if (WIFEXITED(svc->status)) {
-			if (WEXITSTATUS(svc->status))
-				color = "\e[1;31m";
-			else
-				color = "\e[1;32m";
-		} else {
-			if (full && WIFSIGNALED(svc->status))
-				color = "\e[1;31m";
-			else
-				color = "\e[1;33m";
-		}
-		break;
-
-	default:
-		exit_status(svc, ok, sizeof(ok));
-		color = "\e[1;33m";
-		break;
-	}
-
-	if (!full || plain)
-		color = NULL;
-
-	if (!full)
-		snprintf(buf, sizeof(buf), "%-8.8s", s);
-	else
-		snprintf(buf, sizeof(buf), "%s%s%s%s",
-			 color ? color : "", s, ok, color ? "\e[0m" : "");
 
 	return buf;
 }
@@ -1036,6 +1414,176 @@ static int svc_compare(svc_t *svc, char *arg)
 		return 1;
 
 	return 0;
+}
+
+/*
+ * All fields the status views need, transport-independent: filled
+ * from a raw svc_t on the legacy socket path or from Service1
+ * properties on the D-Bus path, rendered by the same printers.
+ */
+struct svc_row {
+	char     ident[MAX_IDENT_LEN];
+	char     state[16];
+	char     type[16];
+	char     desc[MAX_STR_LEN];
+	char     cmdline[512];
+	char     env[MAX_CMD_LEN];
+	char     cond[MAX_COND_LEN];
+	char     pidfile[MAX_CMD_LEN];
+	char     user[MAX_USER_LEN];
+	char     grp[MAX_USER_LEN];
+	char     origin[MAX_ARG_LEN];
+	uint32_t pid;
+	uint32_t runlevels;
+	uint32_t uptime;	/* seconds, 0 when not running */
+	uint32_t exitstatus;	/* raw waitpid(2) status */
+	uint32_t starts;
+	int32_t  restart_tot;
+	int32_t  restart_cnt;
+	int32_t  restart_max;	/* -1 = restart:always */
+	int      manual;
+	int      forking;
+	int      started;
+};
+
+static void fill_row_from_svc(struct svc_row *r, svc_t *svc)
+{
+	long now = jiffies();
+
+	memset(r, 0, sizeof(*r));
+	svc_ident(svc, r->ident, sizeof(r->ident));
+	strlcpy(r->state,   svc_status(svc),  sizeof(r->state));
+	strlcpy(r->type,    svc_typestr(svc), sizeof(r->type));
+	strlcpy(r->desc,    svc->desc,        sizeof(r->desc));
+	svc_command(svc, r->cmdline, sizeof(r->cmdline));
+	strlcpy(r->env,     svc->env,         sizeof(r->env));
+	strlcpy(r->cond,    svc->cond,        sizeof(r->cond));
+	strlcpy(r->pidfile, svc->pidfile,     sizeof(r->pidfile));
+	strlcpy(r->user,    svc->username,    sizeof(r->user));
+	strlcpy(r->grp,     svc->group,       sizeof(r->grp));
+	strlcpy(r->origin,  svc->file,        sizeof(r->origin));
+	r->pid         = svc->pid > 0 ? (uint32_t)svc->pid : 0;
+	r->runlevels   = (uint32_t)svc->runlevels;
+	if (svc->pid && now > svc->start_time)
+		r->uptime = (uint32_t)(now - svc->start_time);
+	r->exitstatus  = (uint32_t)svc->status;
+	r->starts      = (uint32_t)svc->once;
+	r->restart_tot = (int32_t)svc->restart_tot;
+	r->restart_cnt = (int32_t)svc->restart_cnt;
+	r->restart_max = (int32_t)svc->restart_max;
+	r->manual      = svc->manual;
+	r->forking     = svc->forking;
+	r->started     = svc->started;
+}
+
+static const char *pidfile_str(struct svc_row *r)
+{
+	const char *pidfn = r->pidfile;
+
+	if (pidfn[0] == '!')
+		pidfn++;
+	else if (pidfn[0] == 0)
+		pidfn = "none";
+
+	return pidfn;
+}
+
+/* string-only twin of svc_checkenv() */
+static int checkenv_str(const char *env)
+{
+	if (!env || !env[0] || env[0] == '-')
+		return 1;
+
+	return fexist(env);
+}
+
+/* same matching rules as svc_compare() */
+static int row_compare(struct svc_row *r, char *arg)
+{
+	char ident[MAX_IDENT_LEN];
+	char *ptr;
+
+	strlcpy(ident, r->ident, sizeof(ident));
+	ptr = strchr(ident, ':');
+	if (ptr && !strchr(arg, ':'))
+		*ptr = 0;
+
+	return !strcmp(ident, arg);
+}
+
+static int row_missing(struct svc_row *r)
+{
+	char argv0[512];
+	char *sep;
+
+	if (strcmp(r->state, "missing"))
+		return 0;
+
+	strlcpy(argv0, r->cmdline, sizeof(argv0));
+	sep = strchr(argv0, ' ');
+	if (sep)
+		*sep = 0;
+
+	return !whichp(argv0);
+}
+
+/* the words svc_status() emits for a blocked/halted service */
+static const char *halted_words[] = {
+	"halted", "missing", "crashed", "stopped", "busy",
+	"restart", "conflict", "unknown", NULL
+};
+
+/* transport-independent status(svc, full) */
+static char *row_status(struct svc_row *r, int full)
+{
+	static char buf[96];
+	const char *color;
+	char ok[48] = {0};
+	int  st = (int)r->exitstatus;
+	size_t i;
+
+	if (!full) {
+		snprintf(buf, sizeof(buf), "%-8.8s", r->state);
+		return buf;
+	}
+
+	if (!strcmp(r->state, "running")) {
+		color = "\e[1;32m";
+	} else if (!strcmp(r->state, "done") || !strcmp(r->state, "failed")) {
+		exit_status_raw(st, r->manual, ok, sizeof(ok));
+		if (WIFEXITED(st))
+			color = WEXITSTATUS(st) ? "\e[1;31m" : "\e[1;32m";
+		else if (WIFSIGNALED(st))
+			color = "\e[1;31m";
+		else
+			color = "\e[1;33m";
+	} else {
+		exit_status_raw(st, r->manual, ok, sizeof(ok));
+		color = "\e[1;33m";
+		for (i = 0; halted_words[i]; i++) {
+			if (!strcmp(r->state, halted_words[i])) {
+				color = "\e[1m";
+				break;
+			}
+		}
+	}
+
+	if (plain)
+		color = NULL;
+
+	snprintf(buf, sizeof(buf), "%s%s%s%s",
+		 color ? color : "", r->state, ok, color ? "\e[0m" : "");
+
+	return buf;
+}
+
+/* scripting mode: exit code only, same rules as the legacy path */
+static int quiet_row(struct svc_row *r)
+{
+	if (!strcmp(r->type, "run") || !strcmp(r->type, "task"))
+		return r->started ? 0 : 1;
+
+	return strcmp(r->state, "running") != 0;
 }
 
 /*
@@ -1094,46 +1642,40 @@ static char *json_escape(const char *str)
 	return buf;
 }
 
-static int json_status_one(FILE *fp, svc_t *svc, char *indent, int prev)
+static int json_status_one(FILE *fp, struct svc_row *r, char *indent, int prev)
 {
-	long now = jiffies();
-	char *pidfn = NULL;
+	const char *pidfn = pidfile_str(r);
 	char buf[512];
-
-	pidfn = svc->pidfile;
-	if (pidfn[0] == '!')
-		pidfn++;
-	else if (pidfn[0] == 0)
-		pidfn = "none";
 
 	fprintf(fp,
 		"%s"
 		"%s{\n"
 		"%s  \"identity\": \"%s\",\n",
 		prev ? ",\n" : indent, prev ? indent : "",
-		indent, svc_ident(svc, NULL, 0));
+		indent, r->ident);
 	fprintf(fp,
 		"%s  \"description\": \"%s\",\n",
-		indent, json_escape(svc->desc));
+		indent, json_escape(r->desc));
 	fprintf(fp,
 		"%s  \"type\": \"%s\",\n"
 		"%s  \"forking\": %s,\n"
 		"%s  \"status\": \"%s\",\n",
-		indent, svc_typestr(svc),
-		indent, svc->forking ? "true" : "false",
-		indent, svc_status(svc));
+		indent, r->type,
+		indent, r->forking ? "true" : "false",
+		indent, r->state);
 
-	if (svc->state != SVC_RUNNING_STATE) {
+	if (strcmp(r->state, "running")) {
+		int st = (int)r->exitstatus;
 		int rc, sig;
 
-		rc = WEXITSTATUS(svc->status);
-		sig = WTERMSIG(svc->status);
+		rc = WEXITSTATUS(st);
+		sig = WTERMSIG(st);
 
-		if (WIFEXITED(svc->status))
+		if (WIFEXITED(st))
 			fprintf(fp,
 				"%s  \"exit\": { \"%s\": %d },\n",
 				indent, "code", rc);
-		else if (WIFSIGNALED(svc->status))
+		else if (WIFSIGNALED(st))
 			fprintf(fp,
 				"%s  \"exit\": { \"%s\": %d },\n",
 				indent, "signal", sig);
@@ -1141,32 +1683,30 @@ static int json_status_one(FILE *fp, svc_t *svc, char *indent, int prev)
 
 	fprintf(fp,
 		"%s  \"origin\": \"%s\",\n",
-		indent, svc->file[0] ? svc->file : "built-in");
-	svc_command(svc, buf, sizeof(buf), 0);
+		indent, r->origin[0] ? r->origin : "built-in");
 	fprintf(fp,
 		"%s  \"command\": \"%s\",\n",
-		indent, json_escape(buf));
+		indent, json_escape(r->cmdline));
 
-	svc_environ(svc, buf, sizeof(buf), 0);
-	if (buf[0])
+	if (r->env[0])
 		fprintf(fp,
-			"%s  \"environment\": \"%s\",\n", indent, json_escape(buf));
+			"%s  \"environment\": \"%s\",\n", indent, json_escape(r->env));
 
-	svc_cond(svc, buf, sizeof(buf), 0);
+	cond_string(r->cond, buf, sizeof(buf), 0);
 	if (buf[0])
 		fprintf(fp,
 			"%s  \"condition\": %s,\n", indent, buf);
 
-	if (svc->manual)
+	if (r->manual)
 		fprintf(fp,
-			"%s  \"starts\": %d,\n", indent, svc->once);
+			"%s  \"starts\": %u,\n", indent, r->starts);
 
 	fprintf(fp,
-		"%s  \"restarts\": %d,\n", indent, svc->restart_tot); /* XXX: add restart_cnt and restart_max */
+		"%s  \"restarts\": %d,\n", indent, r->restart_tot); /* XXX: add restart_cnt and restart_max */
 
 	/* Add memory and CPU information if cgroup support is available */
-	if (cgrp && svc->pid > 1) {
-		char *group = pid_cgroup(svc->pid);
+	if (cgrp && r->pid > 1) {
+		char *group = pid_cgroup(r->pid);
 
 		if (group) {
 			uint64_t throttled_usec = 0;
@@ -1270,37 +1810,475 @@ static int json_status_one(FILE *fp, svc_t *svc, char *indent, int prev)
 
 	fprintf(fp,
 		"%s  \"pidfile\": \"%s\",\n"
-		"%s  \"pid\": %d,\n"
+		"%s  \"pid\": %u,\n"
 		"%s  \"user\": \"%s\",\n"
 		"%s  \"group\": \"%s\",\n"
 		"%s  \"uptime\": %ld,\n"
 		"%s  \"runlevels\": %s\n"
 		"%s}",
 		indent, pidfn,
-		indent, svc->pid,
-		indent, svc->username,
-		indent, svc->group,
-		indent, svc->pid ? now - svc->start_time : 0,
-		indent, runlevel_arr(svc->runlevels),
+		indent, r->pid,
+		indent, r->user,
+		indent, r->grp,
+		indent, (long)r->uptime,
+		indent, runlevel_arr((int)r->runlevels),
 		indent);
 
 	return 0;
 }
 
+static void status_heading(int pidw, int identw)
+{
+	char title[80];
+
+	snprintf(title, sizeof(title), "%-*s  %-*s  %-8s %-13s ",
+		 pidw, "PID", identw, "IDENT", "STATUS", "RUNLEVELS");
+	strlcat(title, !verbose ? "DESCRIPTION" : "COMMAND", sizeof(title));
+	print_header("%s", title);
+}
+
+static void print_runlevels(const char *lvls)
+{
+	/* ANSI escapes for the active level eat into the field width */
+	if (strchr(lvls, '\e'))
+		printf("%-21.21s ", lvls);
+	else
+		printf("%-13.13s ", lvls);
+}
+
+/*
+ * The detail view, shared by the legacy and D-Bus paths; the caller
+ * fills a svc_row from its transport first.  Cgroup statistics and
+ * the log tail are always local operations, they only need the PID.
+ */
+static int show_one_row(struct svc_row *r)
+{
+	char uptm[42] = "N/A";
+	char buf[512];
+	int bold;
+
+	printf("     Status : %s\n", row_status(r, 1));
+	printf("   Identity : %s\n", r->ident);
+	printf("Description : %s\n", r->desc);
+	printf("     Origin : %s\n", r->origin[0] ? r->origin : "built-in");
+
+	if (r->env[0]) {
+		bold = !plain && !strcmp(r->state, "missing") &&
+			!checkenv_str(r->env);
+		printf("Environment : %s%s%s\n", bold ? "\e[1m" : "",
+		       r->env, bold ? "\e[0m" : "");
+	}
+
+	cond_string(r->cond, buf, sizeof(buf), !plain);
+	if (buf[0])
+		printf("Condition(s): <%s>\n", buf);
+
+	bold = !plain && row_missing(r);
+	printf("    Command : %s%s%s\n", bold ? "\e[1m" : "",
+	       r->cmdline, bold ? "\e[0m" : "");
+	printf("   PID file : %s\n", pidfile_str(r));
+	printf("        PID : %u\n", r->pid);
+	printf("       User : %s\n", r->user);
+	printf("      Group : %s\n", r->grp);
+	printf("     Uptime : %s\n", r->pid
+	       ? uptime((long)r->uptime, uptm, sizeof(uptm)) : uptm);
+	if (r->manual)
+		printf("     Starts : %u\n", r->starts);
+	printf("   Restarts : %d (%d/%d)\n",
+	       r->restart_tot, r->restart_cnt, r->restart_max);
+	printf("  Runlevels : %s\n",
+	       runlevel_string(runlevel, (int)r->runlevels));
+
+	if (cgrp && r->pid > 1) {
+		const struct cg *cg;
+		uint64_t throttled_usec = 0;
+		uint64_t nr_throttled = 0;
+		char path[256];
+		char *group;
+
+		group = pid_cgroup(r->pid);
+		if (!group)
+			goto no_cgroup; /* ... or PID doesn't exist (anymore) */
+
+		snprintf(path, sizeof(path), "%s/%s", FINIT_CGPATH, group);
+		cg = cg_conf(path);
+
+		printf("     Memory : %s\n", memsz(cgroup_memory(group), uptm, sizeof(uptm)));
+
+		if (cgroup_throttle(group, &throttled_usec, &nr_throttled) == 0) {
+			printf("CPU Throttle : %lu usec (%lu times)\n",
+			       throttled_usec, nr_throttled);
+		}
+
+		printf("     CGroup : %s cpu %s [%s, %s] mem [%s, %s]\n",
+		       group, cg->cg_cpu.set, cg->cg_cpu.weight, cg->cg_cpu.max,
+		       cg->cg_mem.min, cg->cg_mem.max);
+		show_cgroup_tree(group, "              ");
+
+		free(group);
+	}
+no_cgroup:
+	printf("\n");
+
+	return do_log_named(r->ident, r->pid, "| tail -10");
+}
+
+static void render_table(struct svc_row *rows, int n, char *filter)
+{
+	int i, identw = 0, pidw = 0;
+
+	for (i = 0; i < n; i++) {
+		int w;
+
+		w = (int)strlen(rows[i].ident);
+		if (w > identw)
+			identw = w;
+		w = snprintf(NULL, 0, "%u", rows[i].pid);
+		if (w > pidw)
+			pidw = w;
+	}
+	if (identw < 6)
+		identw = 6;
+	if (pidw < 3)
+		pidw = 3;
+
+	if (heading)
+		status_heading(pidw, identw);
+
+	for (i = 0; i < n; i++) {
+		struct svc_row *r = &rows[i];
+
+		if (filter && !row_compare(r, filter))
+			continue;
+
+		printf("%-*u  ", pidw, r->pid);
+		printf("%-*s  %s ", identw, r->ident, row_status(r, 0));
+		print_runlevels(runlevel_string(runlevel, (int)r->runlevels));
+
+		if (!verbose)
+			puts(r->desc);
+		else {
+			int bold = !plain && row_missing(r);
+
+			printf("%s%s%s\n", bold ? "\e[1m" : "",
+			       r->cmdline, bold ? "\e[0m" : "");
+		}
+	}
+}
+
+#ifdef HAVE_DBUS
+/*
+ * Service1 wire properties -> svc_row fields.  Unknown keys and
+ * value types are skipped so newer finit keeps working with older
+ * initctl.
+ */
+#define ROW_STR(k, f)  { k, 's', offsetof(struct svc_row, f), \
+			 sizeof(((struct svc_row *)0)->f) }
+#define ROW_U32(k, f)  { k, 'u', offsetof(struct svc_row, f), 0 }
+#define ROW_BOOL(k, f) { k, 'b', offsetof(struct svc_row, f), 0 }
+
+static const struct row_field {
+	const char *key;
+	char        type;
+	size_t      off;
+	size_t      len;
+} row_fields[] = {
+	ROW_STR ("State",         state),
+	ROW_STR ("Type",          type),
+	ROW_STR ("Description",   desc),
+	ROW_STR ("Command",       cmdline),
+	ROW_STR ("Environment",   env),
+	ROW_STR ("Conditions",    cond),
+	ROW_STR ("PidFile",       pidfile),
+	ROW_STR ("User",          user),
+	ROW_STR ("Group",         grp),
+	ROW_STR ("Origin",        origin),
+	ROW_U32 ("Pid",           pid),
+	ROW_U32 ("Runlevels",     runlevels),
+	ROW_U32 ("Uptime",        uptime),
+	ROW_U32 ("ExitStatus",    exitstatus),
+	ROW_U32 ("Starts",        starts),
+	ROW_U32 ("RestartsTotal", restart_tot),
+	ROW_U32 ("RestartCount",  restart_cnt),
+	ROW_U32 ("RestartMax",    restart_max),
+	ROW_BOOL("ManualStart",   manual),
+	ROW_BOOL("Forking",       forking),
+	ROW_BOOL("Started",       started),
+	{ NULL, 0, 0, 0 }
+};
+
+/*
+ * One service's Properties.GetAll into a row.  Returns 0 on success,
+ * 1 when the object vanished since ListServices (bus error reply),
+ * -1 on transport failure.
+ */
+static int dbus_fill_row(link_client_t *c, struct svc_row *row)
+{
+	const link_reply_t *r;
+	link_reader_t reader;
+	char path[256];
+	size_t end;
+	int rc;
+
+	if (dbus_svc_path(row->ident, path, sizeof(path)) < 0)
+		return -1;
+
+	rc = link_client_call_v(c, path,
+				"org.freedesktop.DBus.Properties",
+				"GetAll", "s", "org.finit.Service1");
+	if (rc == LINK_CALL_ERROR)
+		return 1;	/* gone since ListServices */
+	if (rc != LINK_CALL_OK)
+		return -1;
+	r = link_client_reply(c);
+	if (!r || !r->body)
+		return -1;
+
+	link_reader_init(&reader, r->body, r->body_len);
+	if (link_r_array_begin(&reader, &end) < 0)
+		return -1;
+
+	while (link_r_pos(&reader) < end) {
+		const struct row_field *f;
+		const char *key, *val;
+		uint32_t    u;
+		int         b;
+		char        type;
+
+		if (dbus_dict_next(&reader, &key, &type) < 0)
+			return -1;
+
+		for (f = row_fields; f->key; f++)
+			if (f->type == type && !strcmp(f->key, key))
+				break;
+
+		if (!f->key) {
+			if (link_r_skip_basic(&reader, type) < 0)
+				return -1;
+			continue;
+		}
+
+		switch (type) {
+		case 's':
+			if (link_r_string(&reader, &val) < 0)
+				return -1;
+			strlcpy((char *)row + f->off, val, f->len);
+			break;
+		case 'u':
+			if (link_r_u32(&reader, &u) < 0)
+				return -1;
+			memcpy((char *)row + f->off, &u, sizeof(u));
+			break;
+		case 'b':
+			if (link_r_bool(&reader, &b) < 0)
+				return -1;
+			memcpy((char *)row + f->off, &b, sizeof(b));
+			break;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ListServices into a caller-freed ident array.  One round trip;
+ * show_ident() needs nothing more.  Returns count or -1.
+ */
+static int dbus_list_idents(link_client_t *c, char (**out)[MAX_IDENT_LEN])
+{
+	char (*idents)[MAX_IDENT_LEN] = NULL, (*tmp)[MAX_IDENT_LEN];
+	const link_reply_t *r;
+	link_reader_t reader;
+	size_t n = 0, end;
+	int rc;
+
+	rc = link_client_call_v(c, "/org/finit/manager",
+				"org.finit.Manager1", "ListServices", NULL);
+	if (rc != LINK_CALL_OK)
+		return -1;
+
+	r = link_client_reply(c);
+	if (!r || !r->body)
+		return -1;
+
+	link_reader_init(&reader, r->body, r->body_len);
+	if (link_r_array_begin(&reader, &end) < 0)
+		return -1;
+
+	while (link_r_pos(&reader) < end) {
+		const char *ident;
+
+		if (link_r_string(&reader, &ident) < 0)
+			goto fail;
+		tmp = realloc(idents, (n + 1) * sizeof(*idents));
+		if (!tmp)
+			goto fail;
+		idents = tmp;
+		/* copied: the next call clobbers the client rx buffer */
+		strlcpy(idents[n], ident, sizeof(idents[n]));
+		n++;
+	}
+
+	*out = idents;
+	return (int)n;
+fail:
+	free(idents);
+	return -1;
+}
+
+/*
+ * Rows for every service matching `arg` (all when NULL), fetched over
+ * D-Bus.  Returns the row count (caller frees *out), or -1 to fall
+ * back to the legacy socket.
+ */
+static int dbus_fetch_svc_rows(char *arg, struct svc_row **out)
+{
+	char (*idents)[MAX_IDENT_LEN] = NULL;
+	struct svc_row *rows = NULL;
+	link_client_t *c;
+	int n, i, m = 0;
+
+	c = link_client_open(FINIT_BUS_SOCKET);
+	if (!c)
+		return -1;
+
+	n = dbus_list_idents(c, &idents);
+	if (n < 0)
+		goto fail;
+
+	rows = calloc(n ? n : 1, sizeof(*rows));
+	if (!rows)
+		goto fail;
+
+	for (i = 0; i < n; i++) {
+		struct svc_row *row = &rows[m];
+		int rc;
+
+		strlcpy(row->ident, idents[i], sizeof(row->ident));
+		if (arg && arg[0] && !row_compare(row, arg))
+			continue;
+
+		rc = dbus_fill_row(c, row);
+		if (rc < 0)
+			goto fail;
+		if (rc > 0)
+			continue;	/* vanished, skip */
+		m++;
+	}
+
+	free(idents);
+	link_client_close(c);
+	*out = rows;
+	return m;
+fail:
+	free(idents);
+	free(rows);
+	link_client_close(c);
+	return -1;
+}
+
+/* wire encoding is runlevel(8) style: digits, S, N */
+static int runlevel_from_str(const char *s)
+{
+	if (!strcmp(s, "S"))
+		return INIT_LEVEL;
+
+	return atoi(s);
+}
+
+/*
+ * All show_status() views over D-Bus, self-contained (the current
+ * runlevel comes from Manager1, not the legacy socket).  Returns 0
+ * with the command exit code in *retval, or -1 to fall back.
+ */
+static int dbus_show_status(char *arg, int *retval)
+{
+	static const char *const wanted[] = { "Runlevel", NULL };
+	char curr[16] = "0";
+	char *outv[] = { curr };
+	struct svc_row *rows = NULL;
+	char *filter;
+	int n, i;
+
+	n = dbus_fetch_svc_rows(arg, &rows);
+	if (n < 0)
+		return -1;
+
+	*retval = 0;
+
+	if (arg && arg[0]) {
+		if (!n) {
+			free(rows);
+			/* exits, exactly like the legacy path */
+			ERRX(noerr ? 0 : 69, "no such task or service(s): %s", arg);
+		}
+		if (n == 1) {
+			if (quiet) {
+				*retval = quiet_row(&rows[0]);
+				free(rows);
+				return 0;
+			}
+			/* runlevel feeds the detail view's Runlevels line */
+			if (dbus_get_manager_props(wanted, outv, sizeof(curr)) < 0)
+				goto fail;
+			runlevel = runlevel_from_str(curr);
+			if (json) {
+				*retval = json_status_one(stdout, &rows[0], "", 0);
+				puts("");
+			} else
+				*retval = show_one_row(&rows[0]);
+			free(rows);
+			return 0;
+		}
+		/* several matches: filtered table below */
+	}
+
+	if (dbus_get_manager_props(wanted, outv, sizeof(curr)) < 0)
+		goto fail;
+	runlevel = runlevel_from_str(curr);
+
+	filter = (arg && arg[0]) ? arg : NULL;
+	if (json) {
+		int prev = 0;
+
+		for (i = 0; i < n; i++) {
+			if (filter && !row_compare(&rows[i], filter))
+				continue;
+			if (!prev)
+				fputs("[\n", stdout);
+			json_status_one(stdout, &rows[i], "  ", prev++);
+		}
+		if (prev)
+			fputs("\n]\n", stdout);
+	} else
+		render_table(rows, n, filter);
+
+	free(rows);
+	return 0;
+fail:
+	free(rows);
+	return -1;
+}
+#endif /* HAVE_DBUS */
+
 static int show_status(char *arg)
 {
-	char ident[MAX_IDENT_LEN];
-	char buf[512];
+	struct svc_row row;
 	int num = 0;
 	svc_t *svc;
+
+#ifdef HAVE_DBUS
+	{
+		int rc;
+
+		if (dbus_show_status(arg, &rc) == 0)
+			return rc;
+	}
+#endif
 
 	runlevel = runlevel_get(NULL);
 
 	while (arg && arg[0]) {
-		long now = jiffies();
-		char uptm[42] = "N/A";
-		char *pidfn = NULL;
-
 		for (svc = client_svc_iterator(1); svc; svc = client_svc_iterator(0))
 			num += svc_compare(svc, arg);
 
@@ -1311,95 +2289,32 @@ static int show_status(char *arg)
 		if (!svc)
 			ERRX(noerr ? 0 : 69, "no such task or service(s): %s", arg);
 
-		if (quiet) {
-			if (svc_is_runtask(svc)) {
-				if (svc->started)
-					return 0;
-				return 1;
-			}
-			return svc->state != SVC_RUNNING_STATE;
-		}
+		fill_row_from_svc(&row, svc);
+		if (quiet)
+			return quiet_row(&row);
 
 		if (json) {
 			int rc;
 
-			rc = json_status_one(stdout, svc, "", 0);
+			rc = json_status_one(stdout, &row, "", 0);
 			puts("");
 			return rc;
 		}
 
-		pidfn = svc->pidfile;
-		if (pidfn[0] == '!')
-			pidfn++;
-		else if (pidfn[0] == 0)
-			pidfn = "none";
-
-		printf("     Status : %s\n", status(svc, 1));
-		printf("   Identity : %s\n", svc_ident(svc, ident, sizeof(ident)));
-		printf("Description : %s\n", svc->desc);
-		printf("     Origin : %s\n", svc->file[0] ? svc->file : "built-in");
-		svc_environ(svc, buf, sizeof(buf), !plain);
-		if (buf[0])
-			printf("Environment : %s\n", buf);
-		svc_cond(svc, buf, sizeof(buf), !plain);
-		if (buf[0])
-			printf("Condition(s): <%s>\n", buf);
-		printf("    Command : %s\n", svc_command(svc, buf, sizeof(buf), !plain));
-		printf("   PID file : %s\n", pidfn);
-		printf("        PID : %d\n", svc->pid);
-		printf("       User : %s\n", svc->username);
-		printf("      Group : %s\n", svc->group);
-		printf("     Uptime : %s\n", svc->pid ? uptime(now - svc->start_time, uptm, sizeof(uptm)) : uptm);
-		if (svc->manual)
-			printf("     Starts : %d\n", svc->once);
-		printf("   Restarts : %d (%d/%d)\n", svc->restart_tot, svc->restart_cnt, svc->restart_max);
-		printf("  Runlevels : %s\n", runlevel_string(runlevel, svc->runlevels));
-
-		if (cgrp && svc->pid > 1) {
-			const struct cg *cg;
-			uint64_t throttled_usec = 0;
-			uint64_t nr_throttled = 0;
-			char path[256];
-			char *group;
-
-			group = pid_cgroup(svc->pid);
-			if (!group)
-				goto no_cgroup; /* ... or PID doesn't exist (anymore) */
-
-			snprintf(path, sizeof(path), "%s/%s", FINIT_CGPATH, group);
-			cg = cg_conf(path);
-
-			printf("     Memory : %s\n", memsz(cgroup_memory(group), uptm, sizeof(uptm)));
-
-			if (cgroup_throttle(group, &throttled_usec, &nr_throttled) == 0) {
-				printf("CPU Throttle : %lu usec (%lu times)\n",
-				       throttled_usec, nr_throttled);
-			}
-
-			printf("     CGroup : %s cpu %s [%s, %s] mem [%s, %s]\n",
-			       group, cg->cg_cpu.set, cg->cg_cpu.weight, cg->cg_cpu.max,
-			       cg->cg_mem.min, cg->cg_mem.max);
-			show_cgroup_tree(group, "              ");
-
-			free(group);
-		}
-	no_cgroup:
-		printf("\n");
-
-		return do_log(svc, "| tail -10");
+		return show_one_row(&row);
 	}
 
 	if (json) {
 		int prev = 0;
 
 		for (svc = client_svc_iterator(1); svc; svc = client_svc_iterator(0)) {
-			svc_ident(svc, ident, sizeof(ident));
 			if (num && !svc_compare(svc, arg))
 				continue;
 
 			if (!prev)
 				fputs("[\n", stdout);
-			json_status_one(stdout, svc, "  ", prev++);
+			fill_row_from_svc(&row, svc);
+			json_status_one(stdout, &row, "  ", prev++);
 		}
 		if (prev)
 			fputs("\n]\n", stdout);
@@ -1407,64 +2322,71 @@ static int show_status(char *arg)
 		return 0;
 	}
 
-	col_widths();
-	if (heading) {
-		char title[80];
+	{
+		struct svc_row *rows = NULL, *tmp;
+		int n = 0;
 
-		snprintf(title, sizeof(title), "%-*s  %-*s  %-8s %-13s ",
-			 pw, "PID", iw, "IDENT", "STATUS", "RUNLEVELS");
-		if (!verbose)
-			strlcat(title, "DESCRIPTION", sizeof(title)); 
-		else
-			strlcat(title, "COMMAND", sizeof(title)); 
-
-		print_header("%s", title);
-	}
-
-	for (svc = client_svc_iterator(1); svc; svc = client_svc_iterator(0)) {
-		char *lvls;
-
-		svc_ident(svc, ident, sizeof(ident));
-		if (num && !svc_compare(svc, arg))
-			continue;
-
-		printf("%-*d  ", pw, svc->pid);
-		printf("%-*s  %s ", iw, ident, status(svc, 0));
-
-		lvls = runlevel_string(runlevel, svc->runlevels);
-		if (strchr(lvls, '\e'))
-			printf("%-21.21s ", lvls);
-		else
-			printf("%-13.13s ", lvls);
-
-		if (!verbose)
-			puts(svc->desc);
-		else
-			puts(svc_command(svc, buf, sizeof(buf), !plain));
+		for (svc = client_svc_iterator(1); svc; svc = client_svc_iterator(0)) {
+			tmp = realloc(rows, (n + 1) * sizeof(*rows));
+			if (!tmp) {
+				free(rows);
+				return 1;
+			}
+			rows = tmp;
+			fill_row_from_svc(&rows[n++], svc);
+		}
+		render_table(rows, n, num > 1 ? arg : NULL);
+		free(rows);
 	}
 
 	return 0;
+}
+
+static void ident_line(const char *identity, char *arg)
+{
+	size_t len;
+	char *pos;
+
+	pos = strchr(identity, ':');
+	if (pos)
+		len = (size_t)(pos - identity);
+	else
+		len = strlen(identity);
+	if (arg && arg[0] && strncasecmp(identity, arg, len))
+		return;
+
+	puts(identity);
 }
 
 static int show_ident(char *arg)
 {
 	svc_t *svc;
 
+#ifdef HAVE_DBUS
+	{
+		char (*idents)[MAX_IDENT_LEN];
+		link_client_t *c;
+		int n = -1, i;
+
+		c = link_client_open(FINIT_BUS_SOCKET);
+		if (c) {
+			n = dbus_list_idents(c, &idents);
+			link_client_close(c);
+		}
+		if (n >= 0) {
+			for (i = 0; i < n; i++)
+				ident_line(idents[i], arg);
+			free(idents);
+			return 0;
+		}
+	}
+#endif
+
 	for (svc = client_svc_iterator(1); svc; svc = client_svc_iterator(0)) {
 		char ident[MAX_IDENT_LEN];
-		size_t len;
-		char *pos;
 
 		svc_ident(svc, ident, sizeof(ident));
-		pos = strchr(ident, ':');
-		if (pos)
-			len = pos - ident;
-		else
-			len = strlen(ident);
-		if (arg && arg[0] && strncasecmp(ident, arg, len))
-			continue;
-
-		puts(ident);
+		ident_line(ident, arg);
 	}
 
 	return 0;
@@ -1572,6 +2494,9 @@ static int usage(int rc)
 		"                            Note: Finit .conf file(s) are *not* reloaded!\n"
 		"  restart  <NAME>[:ID]      Restart (stop/start) service by name\n"
 		"  kill     <NAME>[:ID] <S>  Send signal S to service by name, with optional ID\n"
+#ifdef HAVE_DBUS
+		"  monitor                   Stream D-Bus signals (service state, conditions) until ^C\n"
+#endif
 		"  ident    [NAME]           Show matching identities for NAME, or all\n"
 		"  status   <NAME>[:ID]      Show service status, by name\n"
 		"  status                    Show status of services, default command\n");
@@ -1756,6 +2681,9 @@ int main(int argc, char *argv[])
 		{ "start",    NULL, do_start,     NULL, NULL  },
 		{ "stop",     NULL, do_stop,      NULL, NULL  },
 		{ "restart",  NULL, do_restart,   NULL, NULL  },
+#ifdef HAVE_DBUS
+		{ "monitor",  NULL, do_monitor,   NULL, NULL  },
+#endif
 		{ "signal",   NULL, NULL,         NULL, do_signal  },
 		{ "kill",     NULL, NULL,         NULL, do_signal  }, /* alias */
 

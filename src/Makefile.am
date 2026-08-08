@@ -81,6 +81,9 @@ finit_SOURCES      = api.c	cgroup.c	cgroup.h	\
 if LOGROTATE
 finit_SOURCES     += logrotate.c
 endif
+if DBUS
+finit_SOURCES     += dbus.c
+endif
 
 pkginclude_HEADERS = cgroup.h cond.h conf.h finit.h helpers.h log.h \
 		     plugin.h svc.h service.h
@@ -94,6 +97,10 @@ finit_LDADD       += ../plugins/libplug.la
 else
 finit_LDADD       += -ldl
 endif
+if DBUS
+finit_CPPFLAGS    += -I$(top_srcdir)/libink
+finit_LDADD       += $(top_builddir)/libink/libink.la
+endif
 
 initctl_SOURCES    = initctl.c initctl.h cgutil.c cgutil.h		\
 		     client.c client.h cond.c cond.h reboot.c		\
@@ -101,6 +108,10 @@ initctl_SOURCES    = initctl.c initctl.h cgutil.c cgutil.h		\
 initctl_CFLAGS     = -W -Wall -Wextra -Wno-unused-parameter -std=gnu99
 initctl_CFLAGS    += $(lite_CFLAGS) $(uev_CFLAGS)
 initctl_LDADD      = $(lite_LIBS) $(uev_LIBS)
+if DBUS
+initctl_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/libink
+initctl_LDADD     += $(top_builddir)/libink/libink.la
+endif
 
 INIT_LNKS          = init telinit
 REBOOT_LNKS        = reboot shutdown halt poweroff suspend

@@ -2,19 +2,14 @@
 
 set -eu
 
-echo "=== Finit Test Sysroot Setup ==="
-echo "Date: $(date)"
-echo "SYSROOT: $SYSROOT"
-echo "top_builddir: $top_builddir"
-echo "srcdir: $srcdir"
-echo "================================"
-echo
-
 # shellcheck disable=SC2154
 make -C "$top_builddir" DESTDIR="$SYSROOT" install
 
 mkdir -p "$SYSROOT/sbin/"
 cp "$top_builddir/test/src/serv" "$SYSROOT/sbin/"
+if [ -x "$top_builddir/test/src/dbus-auth-client" ]; then
+	cp "$top_builddir/test/src/dbus-auth-client" "$SYSROOT/sbin/"
+fi
 
 # shellcheck disable=SC2154
 FINITBIN="$(pwd)/$top_builddir/src/finit" DEST="$SYSROOT" make -f "$srcdir/lib/sysroot.mk"
@@ -31,11 +26,4 @@ for conf in 10-hotplug.conf; do
 done
 
 # Update dynamic linker cache for /usr/local/lib libraries
-echo "Running ldconfig in sysroot: $SYSROOT"
-echo "Contents of $SYSROOT/etc/ld.so.conf:"
-cat "$SYSROOT/etc/ld.so.conf" || echo "Warning: ld.so.conf not found"
-echo "Libraries in $SYSROOT/usr/local/lib:"
-ls -la "$SYSROOT/usr/local/lib/" 2>/dev/null || echo "Warning: /usr/local/lib not found in sysroot"
-ldconfig -v -r "$SYSROOT" || echo "Warning: ldconfig failed with exit code $?"
-echo "Verifying ldconfig cache was created:"
-ls -la "$SYSROOT/etc/ld.so.cache" || echo "Warning: ld.so.cache not created"
+ldconfig -r "$SYSROOT" || echo "Warning: ldconfig failed with exit code $?"

@@ -1,0 +1,7 @@
+.deps/*
+.libs/*
+.dirstamp
+*.lo
+libink.*
+Makefile
+Makefile.in

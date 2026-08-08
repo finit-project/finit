@@ -37,6 +37,13 @@
 #include "service.h"
 #include "sm.h"
 
+#ifdef HAVE_DBUS
+/* Forward-declared locally to keep cond-w.c independent of the
+ * daemon's private.h (which pulls in svc/plugin headers).  The full
+ * prototype lives in private.h for callers in finit's main loop. */
+void dbus_notify_condition_change(const char *name, const char *state);
+#endif
+
 struct cond_boot {
 	TAILQ_ENTRY(cond_boot) link;
 	char *name;
@@ -353,6 +360,9 @@ void cond_set(const char *name)
 	if (cond_set_noupdate(name))
 		return;
 
+#ifdef HAVE_DBUS
+	dbus_notify_condition_change(name, "on");
+#endif
 	cond_update(name);
 }
 
@@ -383,6 +393,9 @@ void cond_set_oneshot(const char *name)
 	if (cond_set_oneshot_noupdate(name))
 		return;
 
+#ifdef HAVE_DBUS
+	dbus_notify_condition_change(name, "on");
+#endif
 	cond_update(name);
 }
 
@@ -404,6 +417,9 @@ void cond_clear(const char *name)
 	if (cond_clear_noupdate(name))
 		return;
 
+#ifdef HAVE_DBUS
+	dbus_notify_condition_change(name, "off");
+#endif
 	cond_update(name);
 }
 

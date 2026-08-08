@@ -71,6 +71,7 @@
 #define BUF_SIZE                4096
 
 #define INIT_SOCKET             _PATH_VARRUN "finit/socket"
+#define FINIT_BUS_SOCKET        _PATH_VARRUN "finit/bus"
 #define INIT_MAGIC              0x03091969
 #define INIT_LEVEL              10
 

@@ -38,6 +38,7 @@
 
 #include "finit.h"
 #include "conf.h"
+#include "private.h"
 #include "svc.h"
 #include "helpers.h"
 #include "pid.h"
@@ -153,6 +154,10 @@ svc_t *svc_new(char *cmd, char *name, char *id, int type)
 
 	TAILQ_INSERT_TAIL(&svc_list, svc, link);
 
+#ifdef HAVE_DBUS
+	dbus_register_service(svc);
+#endif
+
 	return svc;
 }
 
@@ -170,6 +175,10 @@ static struct wq work = {
  */
 int svc_del(svc_t *svc)
 {
+#ifdef HAVE_DBUS
+	dbus_unregister_service(svc);
+#endif
+
 	TAILQ_REMOVE(&svc_list, svc, link);
 	TAILQ_INSERT_TAIL(&gc_list, svc, link);
 
