@@ -56,7 +56,6 @@ nav:
     - Plugins: plugins.md
     - Watchdog: watchdog.md
     - keventd: keventd.md
-    - udev Rule Matching: udev-matching.md
     - D-Bus Integration: dbus.md
     - Service State Machine: state-machine.md
     - Distributions: distro.md
