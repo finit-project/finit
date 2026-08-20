@@ -56,6 +56,7 @@ Other run/task/service settings are:
   * `log {}` -- see [Redirecting Output](logging.md#redirecting-output)
   * `tty` -- see [Controlling TTY](tty.md#controlling-tty-for-services)
   * `notify` -- see [Service Synchronization](service-sync.md)
+  * `pam` -- see the [PAM Sessions](pam.md) section
   * `if` -- see [Conditional Execution](services.md#conditional-execution)
   * `type = "forking"` -- see description of the [service](services.md) block
   * a leading `-` on `command` -- see

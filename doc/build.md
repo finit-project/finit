@@ -15,6 +15,11 @@ and `/dev/disk/by-label/` symlinks after.  keventd is enabled by
 default, so this is a hard requirement unless you build with
 `--without-keventd`.
 
+PAM session support for services is built by default.  It needs
+[Linux-PAM][] (-lpam); the build falls back to no PAM support when that
+library is missing.  A static build, `--enable-static`, disables PAM
+too, since libpam loads its modules with `dlopen()`.
+
 > [!IMPORTANT]
 > Most free/open source software packages that use `configure` default
 > to install to `/usr/local`.  However, some Linux distributions do no
@@ -53,6 +58,14 @@ Below are a few of the main switches to configure:
 * `--enable-static`: Build Finit statically.  The plugins will be
   built-ins (.o files) and all external libraries, except the C library
   will be linked statically.
+
+* `--disable-pam`: Opt out of Finit's built-in PAM session support,
+  enabled by default, which lets a service declare `pam = "name"` and
+  run inside a session set up from `/etc/pam.d/name`.  Needs libpam,
+  falls back to disabled when it is missing, and is also disabled for
+  `--enable-static` builds.  Asking for `--enable-pam` and
+  `--enable-static` together is an error rather than a fallback.  See
+  [PAM Sessions](config/pam.md)
 
 * `--enable-kernel-cmdline`: Enable Finit pre-4.1 parsing of init args from
   `/proc/cmdline`, this is *not recommended* since Finit may be running as the
@@ -272,3 +285,4 @@ it only for debugging start up issues when Finit crashes.
 [libite]:  https://github.com/troglobit/libite
 [libConfuse]: https://github.com/libconfuse/libconfuse
 [util-linux]: https://github.com/util-linux/util-linux
+[Linux-PAM]:  https://github.com/linux-pam/linux-pam

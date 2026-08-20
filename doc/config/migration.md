@@ -261,7 +261,7 @@ Worth knowing
     $SYSLOGD_ARGS"` working with an `envfile`.
   * New settings only appear in the block format.  The first are the
     [per-service directories](service-opts.md#service-directories),
-    `runtime-dir` and friends.
+    `runtime-dir` and friends, and [`pam`](pam.md).
 
 For the full description of every key, see the rest of the
 [Configuration](index.md) section.

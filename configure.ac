@@ -40,7 +40,7 @@ AC_PROG_MKDIR_P
 
 # Configuration.
 AC_CHECK_HEADERS([termios.h sys/ioctl.h mntent.h sys/sysmacros.h])
-AC_CHECK_FUNCS([strstr getopt getmntent getmntent_r])
+AC_CHECK_FUNCS([strstr getopt getmntent getmntent_r close_range])
 
 # Check for uint[8,16,32]_t
 AC_TYPE_UINT8_T
@@ -84,6 +84,11 @@ AC_ARG_ENABLE(cgroup,
 AC_ARG_ENABLE(libcap,
         AS_HELP_STRING([--disable-libcap], [Disable Linux capabilities support]),,[
 				enable_libcap=yes])
+
+AC_ARG_ENABLE(pam,
+        AS_HELP_STRING([--disable-pam], [Disable PAM session support for services]),
+        [pam_explicit=yes],
+        [enable_pam=yes])
 
 AC_ARG_ENABLE(redirect,
         AS_HELP_STRING([--disable-redirect], [Disable redirection of service output to /dev/null]),,[
@@ -235,6 +240,26 @@ AS_IF([test "x$enable_libcap" = "xyes"], [
 	])
 ])
 
+AS_IF([test "x$enable_pam" = "xyes"], [
+	AS_IF([test "x$enable_static" = "xyes"], [
+		AS_IF([test "x$pam_explicit" = "xyes"], [
+			AC_MSG_ERROR([--enable-pam does not work with --enable-static, PAM dlopen()s its modules])], [
+			AC_MSG_NOTICE([PAM disabled for static build, PAM dlopen()s its modules])
+			enable_pam=no])])
+])
+AS_IF([test "x$enable_pam" = "xyes"], [
+	AC_CHECK_HEADER([security/pam_appl.h], [], [
+		AC_MSG_WARN([PAM headers not found, PAM support disabled])
+		enable_pam=no])
+	AS_IF([test "x$enable_pam" = "xyes"], [
+		AC_CHECK_LIB([pam], [pam_start], [
+			AC_DEFINE(HAVE_LIBPAM, 1, [Have Linux-PAM for per-service session support])
+			LIBS="$LIBS -lpam"
+		], [
+			AC_MSG_WARN([libpam not found, PAM support disabled])
+			enable_pam=no])])
+])
+
 AS_IF([test "x$enable_fastboot" = "xyes"], [
 	AC_DEFINE(FAST_BOOT, 1, [Skip fsck check on filesystems listed in /etc/fstab])])
 
@@ -256,6 +281,8 @@ AM_CONDITIONAL(LOGROTATE, [test "x$enable_logrotate" = "xyes"])
 AS_IF([test "x$enable_dbus" = "xyes"], [
 	AC_DEFINE(HAVE_DBUS, 1, [Build D-Bus support via libink])])
 AM_CONDITIONAL(DBUS, [test "x$enable_dbus" = "xyes"])
+
+AM_CONDITIONAL(PAM, [test "x$enable_pam" = "xyes"])
 
 ### With features ##############################################################################
 AS_IF([test "x$bash_dir" = "xyes"], [
@@ -461,6 +488,7 @@ Optional features:
   Replacement libsystemd: $with_libsystemd
   Use cgroup v2.........: $enable_cgroup
   Use libcap............: $enable_libcap
+  Use PAM...............: $enable_pam
   Parse kernel cmdline..: $enable_kernel_cmdline
   Keep kernel logging...: $enable_kernel_logging
   Skip fsck check.......: $enable_fastboot

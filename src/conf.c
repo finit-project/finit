@@ -276,6 +276,7 @@ static cfg_opt_t svc_opts[] = {
 
 	CFG_STR_LIST("capabilities", NULL, CFGF_NODEFAULT),
 	CFG_STR_LIST("caps",         NULL, CFGF_NODEFAULT),	/* alias */
+	CFG_STR     ("pam",          NULL, CFGF_NODEFAULT),
 	CFG_STR     ("runtime-dir",  NULL, CFGF_NODEFAULT),
 	CFG_STR     ("state-dir",    NULL, CFGF_NODEFAULT),
 	CFG_STR     ("cache-dir",    NULL, CFGF_NODEFAULT),
@@ -1485,6 +1486,41 @@ static void dirs_translate(cfg_t *sec, svc_t *svc, char *file)
 	}
 }
 
+/*
+ * Also block format only.  The value names a file in /etc/pam.d, so a
+ * path is refused rather than followed.
+ *
+ * A bad value is stored anyway, or as much of it as fits, and
+ * service_start() refuses to start the service.  Dropping it here
+ * instead would start the service with no session at all, which is the
+ * one outcome the service asking for a session cannot live with.
+ */
+static void pam_translate(cfg_t *sec, svc_t *svc, char *file)
+{
+	const char *str;
+
+	str = sec_getstr(sec, "pam", NULL);
+	if (!str || !str[0])
+		return;
+
+	if (strlcpy(svc->pam, str, sizeof(svc->pam)) >= sizeof(svc->pam)) {
+		logit(LOG_ERR, "%s: %s: pam '%s' is too long, not starting",
+		      file, cfg_title(sec), str);
+		return;
+	}
+
+	if (strchr(str, '/') || strstr(str, "..")) {
+		logit(LOG_ERR, "%s: %s: pam '%s' names a file in /etc/pam.d,"
+		      " not a path, not starting", file, cfg_title(sec), str);
+		return;
+	}
+
+	if (svc->forking)
+		logit(LOG_WARNING, "%s: %s: pam with type = forking closes the"
+		      " session when the initial process exits",
+		      file, cfg_title(sec));
+}
+
 static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *file)
 {
 	struct rlimit local_rlimit[RLIMIT_NLIMITS];
@@ -1699,6 +1735,7 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
 
 	dirs_translate(sec, svc, file);
 	provides_translate(sec, svc, file);
+	pam_translate(sec, svc, file);
 }
 
 /*

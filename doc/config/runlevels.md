@@ -160,6 +160,9 @@ albeit deprecated.
 each `/etc/finit.d/*.conf` read.  I.e., a set of task/run/service
 blocks can share the same rlimits if they are in the same .conf.
 
+For a service with [`pam`](pam.md), `pam_limits` runs after these
+limits are applied, so `limits.conf` has the last word.
+
 Miscellaneous Settings
 ----------------------
 

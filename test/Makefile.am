@@ -51,6 +51,7 @@ EXTRA_DIST		+= global-envs.sh
 EXTRA_DIST		+= initctl-status-subset.sh
 EXTRA_DIST		+= keventd.sh
 EXTRA_DIST		+= notify.sh
+EXTRA_DIST		+= pam-session.sh
 EXTRA_DIST		+= pidfile.sh
 EXTRA_DIST		+= stale-pidfile.sh
 EXTRA_DIST		+= pre-post-serv.sh
@@ -118,6 +119,7 @@ if KEVENTD
 TESTS			+= keventd.sh
 endif
 TESTS			+= notify.sh
+TESTS			+= pam-session.sh
 TESTS			+= pidfile.sh
 TESTS			+= stale-pidfile.sh
 TESTS			+= pre-post-serv.sh

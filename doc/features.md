@@ -178,6 +178,26 @@ See the [Linux Capabilities](config/capabilities.md) section for detailed
 information, examples, and security best practices.
 
 
+**PAM Sessions**
+
+A service can run inside a PAM session, so the `session` stack in
+`/etc/pam.d` applies to it, e.g. limits from `pam_limits`:
+
+```conf
+service weston {
+    user    = "weston"
+    pam     = "weston-autologin"
+    command = "/usr/bin/weston --continue-without-input"
+}
+```
+
+Without a `user` the session is for root.  Requires a build with PAM
+support, which is the default; see `--disable-pam`.
+
+See the [PAM Sessions](config/pam.md) section for the pam.d file the
+example needs, and for how PAM and Finit settings interact.
+
+
 **Supplementary Groups**
 
 Finit supports supplementary groups for services, allowing them to access

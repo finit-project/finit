@@ -34,6 +34,10 @@ All relevant changes are documented in this file.
   same service, `command = { "/lib/systemd/systemd-udevd", "-udevd" }`,
   and Finit starts the first one it finds.  The line-based format could
   only express this by repeating the whole stanza per candidate
+- New `pam = "NAME"` setting for run/task/service/sysv blocks, runs the
+  service inside a PAM session set up from `/etc/pam.d/NAME`, so the `session`
+  stack applies to the process that becomes the daemon, e.g. limits from
+  `pam_limits`, which override a per-service `rlimit`.  Issue #420
 - Finit now ships with a built-in brokerless D-Bus implementation,
   **libink**, exposing the running init system as a peer on its own
   private bus at `/run/finit/bus`, and -- opportunistically --

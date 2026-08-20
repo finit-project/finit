@@ -189,6 +189,9 @@ ps -o user,pid,cmd -p $(pidof nginx)
 - Services without `capabilities` use standard privilege dropping:
   - Services with a non-root `user` have no special capabilities
   - Services without `user` run as root with full capabilities
+- A capability granted by `pam_cap.so` in a [PAM session](pam.md) is
+  merged into this set, but only when `capabilities` is also set.
+  Without it the grant is lost when privileges drop
 - Some very old binaries may not work correctly with ambient capabilities
 - File system capabilities are not managed by Finit (use `setcap` for that)
 

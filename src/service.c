@@ -54,6 +54,7 @@
 #include "devmon.h"
 #include "finit.h"
 #include "helpers.h"
+#include "pam.h"
 #include "pid.h"
 #include "private.h"
 #include "sig.h"
@@ -544,10 +545,22 @@ static void set_uid(uid_t uid, svc_t *svc)
 	 */
 	if (svc->capabilities[0]) {
 		cap_iab_t cap_iab;
+#ifdef HAVE_LIBPAM
+		cap_iab_t pam_iab = NULL;
+		cap_value_t c;
+
+		/*
+		 * A module like pam_cap.so may have granted ambient
+		 * capabilities.  Capture them while we are still root,
+		 * cap_setuid() below clears them.
+		 */
+		if (svc->pam[0])
+			pam_iab = cap_iab_get_proc();
+#endif
 
 		if (cap_setuid(uid)) {
 			err(1, "%s: failed cap_setuid(%d)", svc_ident(svc, NULL, 0), uid);
-			return;
+			goto out;
 		}
 
 		/* After dropping privileges, set the specific capabilities we need */
@@ -555,8 +568,18 @@ static void set_uid(uid_t uid, svc_t *svc)
 		if (!cap_iab) {
 			err(1, "%s: failed parsing capabilities '%s'",
 			    svc_ident(svc, NULL, 0), svc->capabilities);
-			return;
+			goto out;
 		}
+
+#ifdef HAVE_LIBPAM
+		/* Merge, do not overwrite, what PAM granted */
+		if (pam_iab) {
+			for (c = 0; c <= CAP_LAST_CAP; c++) {
+				if (cap_iab_get_vector(pam_iab, CAP_IAB_AMB, c))
+					cap_iab_set_vector(cap_iab, CAP_IAB_AMB, c, CAP_SET);
+			}
+		}
+#endif
 
 		if (cap_iab_set_proc(cap_iab) != 0) {
 			cap_free(cap_iab);
@@ -564,6 +587,11 @@ static void set_uid(uid_t uid, svc_t *svc)
 			    svc_ident(svc, NULL, 0));
 		}
 		cap_free(cap_iab);
+out:
+#ifdef HAVE_LIBPAM
+		cap_free(pam_iab);
+#endif
+		return;
 	} else
 #endif
 	if (setuid(uid))
@@ -703,6 +731,9 @@ static pid_t service_fork(svc_t *svc)
 
 	if (pid == 0) {
 		char *home = NULL;
+#ifdef HAVE_LIBPAM
+		char **pam_env = NULL;
+#endif
 #ifdef ENABLE_STATIC
 		int uid = 0; /* XXX: Fix better warning that dropprivs is disabled. */
 		int gid = 0;
@@ -734,6 +765,15 @@ static pid_t service_fork(svc_t *svc)
 				logit(LOG_WARNING, "%s: rlimit: failed setting %s",
 				      svc_ident(svc, NULL, 0), rlim2str(i));
 		}
+
+#ifdef HAVE_LIBPAM
+		/*
+		 * After our own rlimits so pam_limits wins, and before
+		 * any credential change: the session stack needs root.
+		 */
+		if (svc->pam[0] && pamsess_open(svc, uid, gid, &pam_env))
+			_exit(EX_OSERR);
+#endif
 
 #ifndef ENABLE_STATIC
 		/* Set supplementary groups from /etc/group and config */
@@ -797,6 +837,28 @@ static pid_t service_fork(svc_t *svc)
 			}
 		}
 
+#ifdef HAVE_LIBPAM
+		/* pam_env after our defaults, before env:file */
+		if (pam_env) {
+			const char *pam_home;
+
+			for (int i = 0; pam_env[i]; i++)
+				putenv(pam_env[i]);
+
+			/* pam_env has the last word on HOME, so the
+			 * working directory has to follow it, the chdir()
+			 * above used the passwd home. */
+			pam_home = getenv("HOME");
+			if (pam_home && (!home || strcmp(pam_home, home))) {
+				if (chdir(pam_home)) {
+					if (chdir("/"))
+						err(1, "%s: failed chdir(%s) and chdir(/)",
+						    svc_ident(svc, NULL, 0), pam_home);
+				}
+			}
+		}
+#endif
+
 		/* Source any environment from env:/path/to/file */
 		source_env(svc);
 	}
@@ -809,6 +871,26 @@ static pid_t service_fork(svc_t *svc)
 	}
 
 	return pid;
+}
+
+/*
+ * Checked here, next to the other preconditions, and not only in
+ * conf.c, because a .conf reload rewrites the service and would
+ * otherwise let a refused value start it after all.  Running without
+ * the session the service asked for costs it pam_limits, its private
+ * /tmp, and its logind session, with nothing said.
+ */
+static int pam_refused(svc_t *svc)
+{
+	const char *why = pam_invalid(svc->pam);
+
+	if (!why)
+		return 0;
+
+	logit(LOG_ERR, "%s: pam '%s' %s, not starting",
+	      svc_ident(svc, NULL, 0), svc->pam, why);
+
+	return 1;
 }
 
 /**
@@ -853,6 +935,20 @@ static int service_start(svc_t *svc)
 		svc_missing(svc);
 		return 1;
 	}
+
+	if (pam_refused(svc)) {
+		svc_missing(svc);
+		return 1;
+	}
+
+#ifndef HAVE_LIBPAM
+	if (svc->pam[0]) {
+		logit(LOG_ERR, "%s: pam %s requires Finit built with --enable-pam",
+		      svc_ident(svc, NULL, 0), svc->pam);
+		svc_missing(svc);
+		return 1;
+	}
+#endif
 
 	if (svc_is_tty(svc) && !svc->notty) {
 		char *dev = tty_canonicalize(svc->dev);
@@ -2505,6 +2601,7 @@ svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 		memset(svc->capabilities, 0, sizeof(svc->capabilities));
 
 	/* block format only, set by conf.c after registration */
+	memset(svc->pam, 0, sizeof(svc->pam));
 	for (int i = 0; i < NUM_SVCDIRS; i++) {
 		memset((char *)svc + svcdirs[i].off, 0, MAX_ARG_LEN);
 		svc->dir_mode[i] = 0755;

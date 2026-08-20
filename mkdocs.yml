@@ -39,6 +39,7 @@ nav:
     - Logging: config/logging.md
     - Cgroups: config/cgroups.md
     - Capabilities: config/capabilities.md
+    - PAM Sessions: config/pam.md
     - Templating: config/templating.md
     - SysV Compatibility: config/sysv.md
     - Rescue Mode: config/rescue.md
