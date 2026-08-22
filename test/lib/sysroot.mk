@@ -39,6 +39,15 @@ BBURL          ?= $(BBHOME)/$(BBVER)/$(BBBIN)
 _libs_nss      := $(firstword $(wildcard /lib/$(ARCH)-linux-gnu/libnss_files.so.2 \
                                          /usr/lib/$(ARCH)-linux-gnu/libnss_files.so.2 \
                                          /lib64/libnss_files.so.2 /lib/libnss_files.so.2))
+# PAM dlopen()s its modules too, so ldd cannot see them either.  Only
+# the three the pam-session test needs; absent is fine, it skips.  Their
+# own dependencies are picked up by the ldd pass below.  libpam looks in
+# one compiled-in directory, and here /lib and /usr/lib are two real
+# directories rather than the host's symlink, so /usr/lib comes first.
+_pam_mods      := $(foreach m,pam_permit.so pam_deny.so pam_limits.so,				\
+                    $(firstword $(wildcard /usr/lib/$(ARCH)-linux-gnu/security/$(m)	\
+                                           /lib/$(ARCH)-linux-gnu/security/$(m)	\
+                                           /lib/security/$(m))))
 # A real broker and a real client, staged when the host has them, so
 # one test can check Finit against dbus-daemon instead of only against
 # libink's own client.  Absent is fine, dbus-broker.sh skips.
@@ -53,7 +62,8 @@ _bins          := $(FINITBIN) $(dbus_bins) \
 # The dbus binaries stage exactly like the libraries: same host path,
 # same path under DEST, copied by the rule below.
 _libs_src      := $(foreach bin,$(_bins),$(shell ldd $(bin) 2>/dev/null | grep -Eo '/[^ ]+')) \
-                  $(_libs_nss) $(dbus_bins)
+                  $(foreach mod,$(_pam_mods),$(shell ldd $(mod) 2>/dev/null | grep -Eo '/[^ ]+')) \
+                  $(_libs_nss) $(_pam_mods) $(dbus_bins)
 libs           := $(foreach path,$(sort $(_libs_src)),$(abspath $(DEST))$(path))
 
 all: $(libs) $(DEST)/bin/$(BBBIN)

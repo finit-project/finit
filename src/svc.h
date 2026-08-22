@@ -203,6 +203,7 @@ typedef struct svc {
 	char	       supgroups[MAX_NUM_SUPGROUPS][MAX_USER_LEN];
 	int		       num_supgroups;
 	char	       capabilities[MAX_CMD_LEN];
+	char	       pam[MAX_ARG_LEN];	/* /etc/pam.d/NAME, block format only */
 
 	/* Directories set up for the service, block format only, the
 	 * name is resolved under a fixed base, e.g. /run/NAME */

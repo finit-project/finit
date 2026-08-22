@@ -76,6 +76,9 @@ endif
 if DBUS
 finit_SOURCES     += dbus.c
 endif
+if PAM
+finit_SOURCES     += pam.c pam.h
+endif
 
 pkginclude_HEADERS = cgroup.h cond.h conf.h finit.h helpers.h log.h \
 		     plugin.h svc.h service.h
