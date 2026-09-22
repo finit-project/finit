@@ -558,10 +558,12 @@ static void tmpfiles(char *line)
 					gid = 0;
 
 				rc = makedir(path, mode ?: 0755);
-				if (rc && errno == EEXIST)
-					rc = chmod(path, mode ?: 0755);
-				if (chown(path, uid, gid))
-					warn("Failed chown(%s, %d, %d)", path, uid, gid);
+				if (!rc && !(rc = stat(path, &st))) {
+					if ((st.st_mode & 07777) != (mode ?: 0755))
+						rc = chmod(path, mode ?: 0755);
+					if ((st.st_uid != (uid_t)uid || st.st_gid != (gid_t)gid) && chown(path, uid, gid))
+						warn("Failed chown(%s, %d, %d)", path, uid, gid);
+				}
 			}
 			umask(omask);
 			break;
