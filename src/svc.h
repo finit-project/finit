@@ -100,7 +100,7 @@ typedef enum {
 #define MAX_IDENT_LEN    (MAX_ARG_LEN + MAX_ID_LEN + 1)
 #define MAX_STR_LEN      64
 #define MAX_COND_LEN     (MAX_ARG_LEN * 3)
-#define MAX_USER_LEN     16
+#define MAX_USER_LEN     MAX_ARG_LEN
 #define MAX_NUM_SUPGROUPS 4
 #define MAX_NUM_FDS      64	     /* Max number of I/O plugins */
 #define MAX_NUM_SVC_ARGS 64
