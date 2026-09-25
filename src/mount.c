@@ -121,15 +121,19 @@ void unmount_tmpfs(void)
 	}
 }
 
-void unmount_regular(void)
+int unmount_regular(void)
 {
 	const struct mntent *mnt;
 	FILE *fp = NULL;
+	int rc = 0;
 
 	while ((mnt = iterator("/proc/mounts", &fp))) {
-		if (!unmount(mnt->mnt_dir))
+		rc = unmount(mnt->mnt_dir);
+		if (!rc)
 			iterator_end(&fp);  /* Restart iteration */
 	}
+
+	return !!rc;
 }
 
 /**

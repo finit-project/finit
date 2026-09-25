@@ -170,7 +170,7 @@ static struct sigmap {
 
 void mdadm_wait(void);
 void unmount_tmpfs(void);
-void unmount_regular(void);
+int unmount_regular(void);
 
 static void fs_swapoff(void)
 {
@@ -302,6 +302,7 @@ void do_shutdown(shutop_t op)
 	struct sched_param sched_param = { .sched_priority = 99 };
 	int in_cont = in_container();
 	int signo = SIGTERM;
+	int rc;
 
 	if (SHUTDOWN_DEBUG) cprintf("do_shutdown: entered, op=%d\n", op);
 
@@ -372,12 +373,13 @@ void do_shutdown(shutop_t op)
 	}
 
 	/* Unmount any tmpfs before unmounting swap ... */
-	print(0, "Unmounting filesystems ...");
+	print(-1, "Unmounting filesystems ...");
 	unmount_tmpfs();
 	fs_swapoff();
 
 	/* ... unmount remaining regular file systems. */
-	unmount_regular();
+	rc = unmount_regular();
+	print(rc, NULL);
 
 	/*
 	 * We sit on / so we must remount it ro, try all the things!
