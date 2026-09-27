@@ -586,11 +586,11 @@ static void tmpfiles(char *line)
 				if (gid < 0)
 					gid = 0;
 
-				rc = makedir(path, mode ?: 0755);
-				if (rc && errno == EEXIST)
-					rc = chmod(path, mode ?: 0755);
-				if (chown(path, uid, gid))
-					warn("Failed chown(%s, %d, %d)", path, uid, gid);
+				if (!mode)
+					mode = 0755;
+				rc = makedir(path, mode);
+				if (!rc && dirperm(path, mode, uid, gid))
+					warn("Failed setting mode/owner on %s", path);
 			}
 			umask(omask);
 			break;

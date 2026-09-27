@@ -68,6 +68,7 @@ int   getgroup     (const char *group);
 int   getcuser     (char *buf, size_t len);
 int   getcgroup    (char *buf, size_t len);
 
+int   dirperm      (const char *path, mode_t mode, uid_t uid, gid_t gid);
 int   mksubsys     (const char *dir, mode_t mode, char *user, char *group);
 
 int   fnread       (char *buf, size_t len, char *fmt, ...) __attribute__ ((format (printf, 3, 4)));

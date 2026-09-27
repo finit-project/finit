@@ -25,6 +25,7 @@
 
 #include <ctype.h>		/* isprint() */
 #include <errno.h>
+#include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
 #ifdef HAVE_MNTENT_H
@@ -280,6 +281,31 @@ int getcgroup(char *buf, size_t len)
 	return 0;
 }
 
+/*
+ * Set mode and owner on a directory that may already exist.  Works on
+ * an fd opened with O_NOFOLLOW | O_DIRECTORY, so the change lands on
+ * the directory itself and not on whatever a link at @path points to.
+ * Only what differs is touched, the directory may be immutable.
+ */
+int dirperm(const char *path, mode_t mode, uid_t uid, gid_t gid)
+{
+	struct stat st;
+	int fd, rc;
+
+	fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+
+	rc = fstat(fd, &st);
+	if (!rc && (st.st_mode & 07777) != mode)
+		rc = fchmod(fd, mode);
+	if (!rc && (st.st_uid != uid || st.st_gid != gid))
+		rc = fchown(fd, uid, gid);
+	close(fd);
+
+	return rc;
+}
+
 int mksubsys(const char *dir, mode_t mode, char *user, char *group)
 {
 	mode_t omask;
@@ -295,10 +321,8 @@ int mksubsys(const char *dir, mode_t mode, char *user, char *group)
 			gid = 0;
 
 		rc = makedir(dir, mode);
-		if (rc && errno == EEXIST)
-			rc = chmod(dir, mode);
-		if (chown(dir, uid, gid))
-			err(1, "Failed chown(%s, %d, %d)", dir, uid, gid);
+		if (!rc && dirperm(dir, mode, uid, gid))
+			warn("Failed setting mode/owner on %s", dir);
 	}
 
 	umask(omask);
