@@ -2337,11 +2337,14 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 	if (cgroup)
 		parse_cgroup(svc, cgroup);
 
-	/* New, recently modified or unchanged ... used on reload. */
+	/*
+	 * New or modified since the last reload.  The mark is cleared when
+	 * the change has been applied, on start or reload, so one that is
+	 * still set here is a change that has not been applied yet, e.g.
+	 * the service is paused waiting for a condition.  Leave it.
+	 */
 	if ((file && conf_changed(file)) || conf_changed(svc_getenv(svc)) || svc->args_dirty)
 		svc_mark_dirty(svc);
-	else
-		svc_mark_clean(svc);
 
 	svc_enable(svc);
 
