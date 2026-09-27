@@ -282,25 +282,37 @@ int getcgroup(char *buf, size_t len)
 }
 
 /*
- * Set mode and owner on a directory that may already exist.  Works on
- * an fd opened with O_NOFOLLOW | O_DIRECTORY, so the change lands on
- * the directory itself and not on whatever a link at @path points to.
- * Only what differs is touched, the directory may be immutable.
+ * Set mode and owner on an open fd, only what differs is touched, the
+ * file may be immutable.  mode 0 skips the chmod, uid -1 the chown.
+ */
+int fdperm(int fd, mode_t mode, uid_t uid, gid_t gid)
+{
+	struct stat st;
+	int rc;
+
+	rc = fstat(fd, &st);
+	if (!rc && mode && (st.st_mode & 07777) != mode)
+		rc = fchmod(fd, mode);
+	if (!rc && uid != (uid_t)-1 && (st.st_uid != uid || st.st_gid != gid))
+		rc = fchown(fd, uid, gid);
+
+	return rc;
+}
+
+/*
+ * Same for a directory that may already exist.  Opened with
+ * O_NOFOLLOW | O_DIRECTORY, so the change lands on the directory
+ * itself and not on whatever a link at @path points to.
  */
 int dirperm(const char *path, mode_t mode, uid_t uid, gid_t gid)
 {
-	struct stat st;
 	int fd, rc;
 
 	fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
 	if (fd < 0)
 		return -1;
 
-	rc = fstat(fd, &st);
-	if (!rc && (st.st_mode & 07777) != mode)
-		rc = fchmod(fd, mode);
-	if (!rc && (st.st_uid != uid || st.st_gid != gid))
-		rc = fchown(fd, uid, gid);
+	rc = fdperm(fd, mode, uid, gid);
 	close(fd);
 
 	return rc;
