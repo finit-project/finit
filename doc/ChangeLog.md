@@ -43,6 +43,11 @@ All relevant changes are documented in this file.
   no longer warns on every boot.  By Sam Brkopac
 - Fix crash at config load for a `stop:` or `reload:` script written
   with a timeout, e.g. `stop:5,/bin/true`, which took PID 1 down
+- Fix a lost reload for a service paused mid-reload by a condition in
+  flux.  A second reload arriving meanwhile re-parsed the unchanged .conf
+  and cleared the pending mark, so the service resumed without ever being
+  reloaded.  Seen on Infix, where sshd kept its old listen addresses after
+  a change that landed as two reloads in a row
 
 [4.17][] - 2026-04-28
 ---------------------
