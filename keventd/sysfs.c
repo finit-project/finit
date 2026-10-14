@@ -61,6 +61,41 @@ int sysfs_read_attr(const char *devpath, const char *attr,
 	return sysfs_read_file(path, buf, len);
 }
 
+struct attr_ctx {
+	const char *attr;
+	char       *buf;
+	size_t      len;
+};
+
+static int attr_cb(const char *syspath, void *data)
+{
+	struct attr_ctx *ctx = data;
+	char path[PATH_MAX];
+
+	snprintf(path, sizeof(path), "%s/%s", syspath, ctx->attr);
+	if (sysfs_read_file(path, ctx->buf, ctx->len) == 0)
+		return 0;	/* found, stop walking */
+
+	return 1;
+}
+
+int sysfs_read_attr_chain(const char *devpath, const char *attr,
+			  char *buf, size_t len)
+{
+	struct attr_ctx ctx = { attr, buf, len };
+
+	if (!devpath || !attr || !*attr)
+		return -1;
+
+	/* Device itself first then walk up toward the parent devices */
+	if (sysfs_read_attr(devpath, attr, buf, len) == 0)
+		return 0;
+
+	sysfs_parent_walk(devpath, attr_cb, &ctx);
+
+	return buf[0] ? 0 : -1;
+}
+
 int sysfs_parent_walk(const char *devpath,
 		      int (*cb)(const char *syspath, void *data),
 		      void *data)
