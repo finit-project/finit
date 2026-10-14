@@ -41,6 +41,15 @@ int sysfs_read_attr(const char *devpath, const char *attr,
 		    char *buf, size_t len);
 
 /*
+ * Read a sysfs attribute for the device at /sys{devpath}, falling back
+ * to the parent chain, partitions have no "serial" of their own, it
+ * lives in the parent disk's sysfs directory.
+ * Returns 0 on success, -1 if no level of the chain has the attribute.
+ */
+int sysfs_read_attr_chain(const char *devpath, const char *attr,
+			  char *buf, size_t len);
+
+/*
  * Walk the sysfs device tree upward from devpath toward /sys/devices,
  * calling cb at each level.  cb receives the absolute syspath and the
  * caller-supplied data pointer.  Walk stops when cb returns 0 (found)

@@ -792,7 +792,7 @@ static int disk_path_id(struct uevent *ev, char *id, size_t len)
 static int symlink_add_disk(struct uevent *ev)
 {
 	char target[PATH_MAX], link[PATH_MAX], id[256];
-	const char *name;
+	const char *name, *devtype;
 
 	if (!ev->devname)
 		return -1;
@@ -801,13 +801,22 @@ static int symlink_add_disk(struct uevent *ev)
 	name = strrchr(ev->devname, '/');
 	name = name ? name + 1 : ev->devname;
 
-	/* by-id: serial-based identifier */
+	/*
+	 * by-id: serial-based identifier.
+	 * Partitions are skipped, as their serial lives on the parent disk and would
+	 * clobber its by-id link, partitions get theirs from the udev rules instead.
+	 */
+	devtype = uevent_getenv(ev, "DEVTYPE");
+	if (devtype && !strcmp(devtype, "partition"))
+		goto path;
+
 	if (!disk_serial_id(ev, id, sizeof(id))) {
 		snprintf(target, sizeof(target), "../../%s", name);
 		snprintf(link, sizeof(link), "/dev/disk/by-id/%s", id);
 		symlink_create(target, link, ev->devpath);
 	}
 
+path:
 	/* by-path: topology-based identifier */
 	if (!disk_path_id(ev, id, sizeof(id))) {
 		snprintf(target, sizeof(target), "../../%s", name);

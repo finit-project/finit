@@ -602,12 +602,12 @@ static void subst_value(const char *src, char *buf, size_t bufsz,
 
 						if (al >= sizeof(attr))
 							al = sizeof(attr) - 1;
-						memcpy(attr, as, al);
-						attr[al] = 0;
-						if (!sysfs_read_attr(ev->devpath, attr,
-								     tmp, sizeof(tmp)))
-							append_str(buf, &pos, bufsz, tmp);
-						p = ae + 1;
+					memcpy(attr, as, al);
+					attr[al] = 0;
+					if (!sysfs_read_attr_chain(ev->devpath, attr,
+								   tmp, sizeof(tmp)))
+						append_str(buf, &pos, bufsz, tmp);
+					p = ae + 1;
 					} else {
 						buf[pos++] = '%'; buf[pos] = 0;
 					}
@@ -681,7 +681,8 @@ static void subst_value(const char *src, char *buf, size_t bufsz,
 						al = sizeof(attr) - 1;
 					memcpy(attr, as, al);
 					attr[al] = 0;
-					if (!sysfs_read_attr(ev->devpath, attr, tmp, sizeof(tmp)))
+					if (!sysfs_read_attr_chain(ev->devpath, attr,
+								   tmp, sizeof(tmp)))
 						append_str(buf, &pos, bufsz, tmp);
 					p = ae + 1;
 				} else {
