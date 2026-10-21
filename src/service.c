@@ -1599,6 +1599,15 @@ int service_restart_now(svc_t *svc)
 	if (!svc)
 		return 1;
 
+	if (svc_is_runtask(svc) && svc_is_remain(svc) &&
+	    svc->state == SVC_DONE_STATE) {
+		service_timeout_cancel(svc);
+		svc_restarting(svc);
+		service_step(svc);
+
+		return 0;
+	}
+
 	if (!svc_is_running(svc))
 		return service_start_now(svc);
 
@@ -3378,8 +3387,8 @@ restart:
 				svc_set_state(svc, SVC_CLEANUP_STATE);
 				service_cleanup_script(svc);
 			} else {
-				/* Unblock remain tasks after post script so they can restart */
-				if (svc_is_remain(svc))
+				/* Restart remain tasks after runlevel/reload/restart teardown. */
+				if (svc_is_remain(svc) && svc_is_restart(svc))
 					svc_unblock(svc);
 				svc_set_state(svc, SVC_HALTED_STATE);
 			}
@@ -3398,13 +3407,17 @@ restart:
 		break;
 
 	case SVC_DONE_STATE:
-		/* Remain tasks: always run post script when stopped, even if config changed */
-		if (svc_is_runtask(svc) && svc_is_remain(svc) && svc_is_stopped(svc)) {
+		/* Remain tasks run post script before stopping or restarting. */
+		if (svc_is_runtask(svc) && svc_is_remain(svc) &&
+		    (svc_is_stopped(svc) || svc_is_restart(svc))) {
 			if (svc_has_post(svc)) {
 				svc_set_state(svc, SVC_TEARDOWN_STATE);
 				service_post_script(svc);
-			} else
+			} else {
+				if (svc_is_restart(svc))
+					svc_unblock(svc);
 				svc_set_state(svc, SVC_HALTED_STATE);
+			}
 		} else if (svc_is_changed(svc))
 			svc_set_state(svc, SVC_HALTED_STATE);
 		else if (svc_is_runtask(svc) && svc_is_manual(svc) && enabled)
@@ -3727,7 +3740,7 @@ void service_runtask_clean(void)
 
 			/* Config changed or leaving runlevel: stop, run post, restart */
 			svc->once = 0;
-			svc_stop(svc);
+			svc_restarting(svc);
 			service_step(svc);
 			continue;
 		}
