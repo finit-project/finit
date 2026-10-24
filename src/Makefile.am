@@ -88,8 +88,10 @@ finit_CPPFLAGS     = $(AM_CPPFLAGS) -D__FINIT__
 finit_CFLAGS       = -W -Wall -Wextra -Wno-unused-parameter -std=gnu99
 finit_CFLAGS      += $(lite_CFLAGS) $(uev_CFLAGS)
 finit_LDADD        = $(lite_LIBS) $(uev_LIBS)
+finit_LDFLAGS      = $(AM_LDFLAGS)
 if STATIC
-finit_LDADD       += ../plugins/libplug.la
+finit_LDADD       += ../plugins/libplug.a
+finit_LDFLAGS     += -Wl,--whole-archive,../plugins/libplug.a,--no-whole-archive
 else
 finit_LDADD       += -ldl
 endif

@@ -6,51 +6,56 @@ AM_CPPFLAGS        += -D_XOPEN_SOURCE=600 -D_BSD_SOURCE -D_GNU_SOURCE -D_DEFAULT
 AM_CPPFLAGS        += -D__FINIT__ $(lite_CFLAGS) $(uev_CFLAGS)
 
 if STATIC
-noinst_LTLIBRARIES  = libplug.la
-libplug_la_SOURCES  = bootmisc.c pidfile.c procps.c sys.c usr.c
+noinst_LIBRARIES    = libplug.a
+libplug_a_SOURCES   = bootmisc.c pidfile.c procps.c sys.c usr.c
+libplug_a_CFLAGS    = $(AM_CFLAGS)
 
 if BUILD_ALSA_UTILS_PLUGIN
-libplug_la_SOURCES += alsa-utils.c
+libplug_a_SOURCES  += alsa-utils.c
 endif
 
 if BUILD_DBUS_PLUGIN
-libplug_la_SOURCES += dbus.c
+libplug_a_SOURCES  += dbus.c
+endif
+
+if BUILD_HOOK_SCRIPTS_PLUGIN
+libplug_a_SOURCES  += hook-scripts.c
 endif
 
 if BUILD_MODULES_LOAD_PLUGIN
-libplug_la_SOURCES += modules-load.c
+libplug_a_SOURCES  += modules-load.c
 endif
 
 if BUILD_MODPROBE_PLUGIN
-libplug_la_SOURCES += modprobe.c
+libplug_a_SOURCES  += modprobe.c
 endif
 
 if BUILD_NETLINK_PLUGIN
-libplug_la_SOURCES += netlink.c
+libplug_a_SOURCES  += netlink.c
 endif
 
 if BUILD_PLYMOUTH_PLUGIN
-libplug_la_SOURCES += plymouth.c
+libplug_a_SOURCES  += plymouth.c
 endif
 
 if BUILD_RESOLVCONF_PLUGIN
-libplug_la_SOURCES += resolvconf.c
+libplug_a_SOURCES  += resolvconf.c
 endif
 
 if BUILD_RTC_PLUGIN
-libplug_la_SOURCES += rtc.c
+libplug_a_SOURCES  += rtc.c
 endif
 
 if BUILD_TTY_PLUGIN
-libplug_la_SOURCES += tty.c
+libplug_a_SOURCES  += tty.c
 endif
 
 if BUILD_URANDOM_PLUGIN
-libplug_la_SOURCES += urandom.c
+libplug_a_SOURCES  += urandom.c
 endif
 
 if BUILD_X11_COMMON_PLUGIN
-libplug_la_SOURCES += x11-common.c
+libplug_a_SOURCES  += x11-common.c
 endif
 
 else
