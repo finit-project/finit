@@ -3,15 +3,15 @@ Starting & Monitoring
 
 Finit can start and monitor the following types of daemons:
 
-* Forks to background, creates a PID file
-* Runs in foreground and signals ready by:
-  - creating a PID file
-  - does not create a PID file -- Finit can create it for you (optional)
-  - [other mechanism][1] (systemd, s6)
+  * Forks to background, creates a PID file
+  * Runs in foreground and signals ready by:
+    - creating a PID file
+    - does not create a PID file -- Finit can create it for you (optional)
+    - [other mechanism][1] (systemd, s6)
 
 Finit can *not* start and monitor a daemon that:
 
-* Forks to background and does *not* create a PID file
+  * Forks to background and does *not* create a PID file
 
 |   | Forking | Creates PID File | Finit creates PID File |
 |---|---------|------------------|------------------------|
