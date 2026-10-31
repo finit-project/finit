@@ -82,6 +82,13 @@ static int builtin_kmod(struct uevent *ev, int argc, char **argv)
 /* ---- hwdb -------------------------------------------------------- */
 
 /*
+ * Longest lookup key.  A key built by the stock name-based evdev rule
+ * (name, phys, ev and the DMI modalias) is 280 to 300 bytes with typical
+ * DMI strings, and 250 to 265 bytes for the plain name rule.
+ */
+#define HWDB_KEY_MAX 1024
+
+/*
  * Match a single text hwdb file against the lookup key.
  * Text format: match lines at column 0, property lines indented.
  * Empty lines or lines starting with '#' reset the match state.
@@ -106,7 +113,11 @@ static void hwdb_match_file(const char *path, const char *lookup,
 	while (fgets(line, sizeof(line), fp)) {
 		line[strcspn(line, "\n")] = '\0';
 
-		if (!line[0] || line[0] == '#') {
+		/* Comments do not end the record being read */
+		if (line[0] == '#')
+			continue;
+
+		if (!line[0]) {
 			matched  = 0;
 			in_props = 0;
 			continue;
@@ -145,9 +156,11 @@ static void hwdb_match_file(const char *path, const char *lookup,
 /*
  * Build the hwdb lookup key for input devices.
  *
- * udev hwdb files use the format:
- *   evdev:input:b{BUS}v{VENDOR}p{PRODUCT}e{VERSION}*
- * where all fields are 4-digit uppercase hex.
+ * The key is the modalias of the input device, which the rule's
+ * --lookup-prefix (evdev:, id-input:modalias:) is put in front of:
+ *   input:b{BUS}v{VENDOR}p{PRODUCT}e{VERSION}-e{CAPABILITIES...}
+ * where the IDs are 4-digit uppercase hex.  If the device has no modalias
+ * attribute, the part up to the version is built from the id/ files.
  *
  * The id/ files live under the input device directory.  For eventN nodes
  * (devpath ends in .../inputN/eventN) we strip the last component first.
@@ -156,7 +169,7 @@ static void hwdb_input_key(const struct uevent *ev, char *key, size_t len)
 {
 	char base[PATH_MAX];
 	char path[PATH_MAX];
-	char bus_s[8], vendor_s[8], product_s[8], version_s[8];
+	char bus_s[8] = "", vendor_s[8] = "", product_s[8] = "", version_s[8] = "";
 
 	if (!ev->devpath)
 		return;
@@ -180,11 +193,28 @@ static void hwdb_input_key(const struct uevent *ev, char *key, size_t len)
 		snprintf(path, sizeof(path), "/sys%s", ev->devpath);
 	}
 
-	snprintf(base, sizeof(base), "%s/id/vendor",  path); sysfs_read_file(base, vendor_s,  sizeof(vendor_s));
-	snprintf(base, sizeof(base), "%s/id/product",  path); sysfs_read_file(base, product_s, sizeof(product_s));
-	snprintf(base, sizeof(base), "%s/id/version",  path); sysfs_read_file(base, version_s, sizeof(version_s));
+	/*
+	 * Prefer the modalias of the input device.  Unlike the id/ files it
+	 * carries the capability bitmaps (-e0,1,2,4,k110,...) that some
+	 * entries match on.
+	 */
+	snprintf(base, sizeof(base), "%s/modalias", path);
+	if (!sysfs_read_file(base, key, len) && !strncmp(key, "input:", 6))
+		return;
+	key[0] = '\0';
 
-	snprintf(key, len, "evdev:input:b%04Xv%04Xp%04Xe%04X*",
+	/* Otherwise build it from the id/ files; without a full set there is no key. */
+	snprintf(base, sizeof(base), "%s/id/vendor", path);
+	if (sysfs_read_file(base, vendor_s, sizeof(vendor_s)) < 0)
+		return;
+	snprintf(base, sizeof(base), "%s/id/product", path);
+	if (sysfs_read_file(base, product_s, sizeof(product_s)) < 0)
+		return;
+	snprintf(base, sizeof(base), "%s/id/version", path);
+	if (sysfs_read_file(base, version_s, sizeof(version_s)) < 0)
+		return;
+
+	snprintf(key, len, "input:b%04Xv%04Xp%04Xe%04X*",
 		 (unsigned)strtoul(bus_s,     NULL, 16),
 		 (unsigned)strtoul(vendor_s,  NULL, 16),
 		 (unsigned)strtoul(product_s, NULL, 16),
@@ -265,24 +295,48 @@ static void hwdb_scan(const char *key, struct uevent *ev)
 	}
 }
 
+/* Insert prefix in front of key, in place; -1 if the result does not fit. */
+static int hwdb_prepend(char *key, size_t len, const char *prefix)
+{
+	size_t plen = strlen(prefix), klen = strlen(key);
+
+	if (plen + klen >= len)
+		return -1;
+	memmove(key + plen, key, klen + 1);
+	memcpy(key, prefix, plen);
+	return 0;
+}
+
 static int builtin_hwdb(struct uevent *ev, int argc, char **argv)
 {
 	const char *subsys = NULL;
 	const char *prefix = NULL;
-	char        key[256] = "";
+	const char *explicit_key = NULL;
+	char        key[HWDB_KEY_MAX] = "";
 	int         i;
 
-	/* Parse --subsystem=X and --lookup-prefix=Y */
+	/*
+	 * Parse --subsystem=X and --lookup-prefix=Y.  The first argument
+	 * that is not an option is the lookup key itself, which is how the
+	 * stock udev rules use the builtin:
+	 *
+	 *   IMPORT{builtin}="hwdb 'evdev:name:$attr{name}:$attr{[dmi/id]modalias}'"
+	 */
 	for (i = 1; i < argc; i++) {
 		if (!strncmp(argv[i], "--subsystem=", 12))
 			subsys = argv[i] + 12;
 		else if (!strncmp(argv[i], "--lookup-prefix=", 16))
 			prefix = argv[i] + 16;
+		else if (argv[i][0] != '-' && !explicit_key)
+			explicit_key = argv[i];
 	}
 	if (!subsys)
 		subsys = ev->subsystem;
 
-	if (subsys && !strcmp(subsys, "input")) {
+	if (explicit_key) {
+		if (snprintf(key, sizeof(key), "%s", explicit_key) >= (int)sizeof(key))
+			goto too_long;
+	} else if (subsys && !strcmp(subsys, "input")) {
 		hwdb_input_key(ev, key, sizeof(key));
 	} else if (subsys && (!strcmp(subsys, "usb") ||
 			      !strcmp(subsys, "usb_device"))) {
@@ -290,28 +344,29 @@ static int builtin_hwdb(struct uevent *ev, int argc, char **argv)
 	}
 
 	/* Fall back to MODALIAS / ev->modalias for pci, platform, etc. */
-	if (!key[0]) {
+	if (!key[0] && !explicit_key) {
 		const char *m = uevent_getenv(ev, "MODALIAS");
 
 		if (!m)
 			m = ev->modalias;
-		if (m)
-			snprintf(key, sizeof(key), "%s", m);
+		if (m && snprintf(key, sizeof(key), "%s", m) >= (int)sizeof(key))
+			goto too_long;
 	}
 
 	if (!key[0])
 		return 0;
 
 	/* --lookup-prefix scopes the match by prepending to the key. */
-	if (prefix && *prefix) {
-		char tmp[sizeof(key)];
-
-		snprintf(tmp, sizeof(tmp), "%s%s", prefix, key);
-		snprintf(key, sizeof(key), "%s", tmp);
-	}
+	if (prefix && *prefix && hwdb_prepend(key, sizeof(key), prefix))
+		goto too_long;
 
 	logit(LOG_DEBUG, "rules: hwdb lookup: %s", key);
 	hwdb_scan(key, ev);
+	return 0;
+
+too_long:
+	logit(LOG_WARNING, "rules: hwdb key too long (max %d bytes), lookup skipped",
+	      HWDB_KEY_MAX - 1);
 	return 0;
 }
 
