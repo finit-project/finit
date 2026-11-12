@@ -42,6 +42,9 @@
 #include "iwatch.h"
 #include "conf.h"
 #include "service.h"
+#ifdef AUTO_RELOAD
+#include "sm.h"
+#endif
 #include "log.h"
 #include "util.h"
 

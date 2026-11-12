@@ -67,6 +67,9 @@
 #include "legacy.h"
 #include "private.h"
 #include "service.h"
+#ifdef AUTO_RELOAD
+#include "sm.h"
+#endif
 #include "helpers.h"
 #include "util.h"
 
