@@ -508,6 +508,62 @@ static struct devrule *find_rule(struct uevent *ev)
 }
 
 /*
+ * Build the relative target of a symlink at /dev/<link> that points at the
+ * device node /dev/<node>, e.g.
+ *
+ *   link "input/by-id/usb-X-event-kbd", node "input/event17" -> "../event17"
+ *   link "disk/by-id/ata-X",            node "sda"           -> "../../sda"
+ *
+ * Both arguments are relative to /dev.  The directory components the link
+ * and the node have in common are dropped, then one "../" is emitted for
+ * each directory the link still has to climb out of.
+ */
+static int symlink_relative_target(const char *link, const char *node,
+				   char *buf, size_t len)
+{
+	const char *l = link, *n = node;
+	size_t off = 0;
+	int ret;
+
+	while (*l == '/')
+		l++;
+	while (*n == '/')
+		n++;
+
+	/* Skip leading directories shared by both paths */
+	for (;;) {
+		const char *ls = strchr(l, '/');
+		const char *ns = strchr(n, '/');
+
+		if (!ls || !ns || ls - l != ns - n || strncmp(l, n, ls - l))
+			break;
+		l = ls + 1;
+		n = ns + 1;
+		while (*l == '/')
+			l++;
+		while (*n == '/')
+			n++;
+	}
+
+	buf[0] = 0;
+	for (; (l = strchr(l, '/')); l++) {
+		while (l[1] == '/')
+			l++;
+		if (!l[1])
+			break;
+		ret = snprintf(buf + off, len - off, "../");
+		if (ret < 0 || (size_t)ret >= len - off)
+			return -1;
+		off += ret;
+	}
+
+	ret = snprintf(buf + off, len - off, "%s", n);
+	if (ret < 0 || (size_t)ret >= len - off)
+		return -1;
+	return 0;
+}
+
+/*
  * Create device node in /dev.
  */
 int devnode_add(struct uevent *ev)
@@ -903,9 +959,6 @@ int symlink_add(struct uevent *ev)
 	for (i = 0; i < ev->applied.nsymlinks; i++) {
 		const char *devname, *sl;
 		char link[PATH_MAX], target[PATH_MAX];
-		size_t toff = 0;
-		int depth = 0;
-		const char *p;
 
 		sl = ev->applied.symlinks[i];
 		if (!sl || !*sl)
@@ -915,19 +968,15 @@ int symlink_add(struct uevent *ev)
 		if (!devname)
 			continue;
 
-		/* basename of devname for the symlink target */
-		const char *base = strrchr(devname, '/');
-		base = base ? base + 1 : devname;
-
-		/* Count '/' in symlink path to determine relative depth */
-		for (p = sl; *p; p++)
-			if (*p == '/')
-				depth++;
-
-		target[0] = 0;
-		for (int d = 0; d < depth; d++)
-			toff += snprintf(target + toff, sizeof(target) - toff, "../");
-		snprintf(target + toff, sizeof(target) - toff, "%s", base);
+		/*
+		 * The node lives at /dev/<devname>, which is not necessarily
+		 * directly in /dev (input/event17, dri/card0, ...), so the
+		 * target must be computed relative to the link's directory.
+		 */
+		if (symlink_relative_target(sl, devname, target, sizeof(target))) {
+			logit(LOG_WARNING, "Symlink %s -> %s: path too long", sl, devname);
+			continue;
+		}
 
 		snprintf(link, sizeof(link), "/dev/%s", sl);
 		symlink_create(target, link, ev->devpath ?: "");

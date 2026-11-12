@@ -501,6 +501,33 @@ void rules_free(struct rule_list *list)
 
 /* ----- variable substitution ------------------------------------------- */
 
+/*
+ * Syspath of the parent device selected by the last successful
+ * KERNELS/SUBSYSTEMS/DRIVERS/ATTRS== match of the rule being evaluated.
+ * As in udev, $attr{} and %s{} fall back to this parent when the event
+ * device has no such attribute itself; the stock rules rely on it:
+ *
+ *   ATTRS{bInterfaceNumber}=="?*", SYMLINK+="...-if$attr{bInterfaceNumber}-..."
+ *
+ * Cleared at the start of every rule and again once it has been applied.
+ */
+static char matched_parent[PATH_MAX];
+
+/* Read an attribute for $attr{}/%s{}: the event device first, then the matched parent */
+static int subst_read_attr(const struct uevent *ev, const char *attr,
+			   char *buf, size_t len)
+{
+	char path[PATH_MAX];
+
+	if (ev->devpath && !sysfs_read_attr(ev->devpath, attr, buf, len))
+		return 0;
+	if (!matched_parent[0])
+		return -1;
+
+	snprintf(path, sizeof(path), "%s/%s", matched_parent, attr);
+	return sysfs_read_file(path, buf, len);
+}
+
 static void append_str(char *buf, size_t *pos, size_t bufsz, const char *s)
 {
 	size_t l;
@@ -604,8 +631,7 @@ static void subst_value(const char *src, char *buf, size_t bufsz,
 							al = sizeof(attr) - 1;
 						memcpy(attr, as, al);
 						attr[al] = 0;
-						if (!sysfs_read_attr(ev->devpath, attr,
-								     tmp, sizeof(tmp)))
+						if (!subst_read_attr(ev, attr, tmp, sizeof(tmp)))
 							append_str(buf, &pos, bufsz, tmp);
 						p = ae + 1;
 					} else {
@@ -681,7 +707,7 @@ static void subst_value(const char *src, char *buf, size_t bufsz,
 						al = sizeof(attr) - 1;
 					memcpy(attr, as, al);
 					attr[al] = 0;
-					if (!sysfs_read_attr(ev->devpath, attr, tmp, sizeof(tmp)))
+					if (!subst_read_attr(ev, attr, tmp, sizeof(tmp)))
 						append_str(buf, &pos, bufsz, tmp);
 					p = ae + 1;
 				} else {
@@ -908,6 +934,8 @@ static int parent_cb(const char *syspath, void *data)
 
 	if (pattern_match(k->value, subject, k->pat_type)) {
 		ctx->found = 1;
+		if (k->op == OP_MATCH_EQ)
+			snprintf(matched_parent, sizeof(matched_parent), "%s", syspath);
 		return 0;	/* stop walking */
 	}
 	return 1;		/* keep walking */
@@ -1100,6 +1128,8 @@ static int match_key(const struct rule *r, const struct rule_key *k,
 static int rule_matches(const struct rule *r, struct uevent *ev)
 {
 	int i;
+
+	matched_parent[0] = 0;
 
 	for (i = 0; i < r->nkeys; i++) {
 		const struct rule_key *k = &r->keys[i];
@@ -1627,6 +1657,7 @@ int rules_apply(struct rule_list *list, struct uevent *ev)
 		      uevent_action_str(ev->action), ev->devpath ?: "");
 
 		exec_rule(r, ev);
+		matched_parent[0] = 0;
 
 		/* GOTO takes effect after this rule's assignments are applied */
 		goto_label = NULL;
