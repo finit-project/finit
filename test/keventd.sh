@@ -39,6 +39,14 @@ run "ip link del probe0"
 sep "keventd readiness"
 retry 'assert_ready "keventd"' 50 0.2
 
+# Finit does not touch a daemon-owned pidfile, so keventd must do it
+# after SIGHUP to reassert readiness, see issue #503.  Signalled with
+# kill to keep Finit out of it.
+sep "keventd touches its pidfile on SIGHUP"
+run "touch -d '2000-01-01 00:00' /run/keventd.pid"
+run "kill -HUP $(texec cat /run/keventd.pid)"
+retry "test \$(texec stat -c %Y /run/keventd.pid) -gt 1000000000" 10 0.2
+
 sep "interface add asserts <class/net/dummy0>"
 cat >> "$SYSROOT$FINIT_CONF" <<EOF
 service serv {

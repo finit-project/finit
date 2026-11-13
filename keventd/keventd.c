@@ -143,6 +143,7 @@ static int num_ac;
 static int level;
 static int logon;
 static int passive;		/* power-supply only, no device management */
+static int ready;		/* pidfile created, see issue #503 */
 
 static struct rule_list rules = TAILQ_HEAD_INITIALIZER(rules);
 static char *rules_dir;			/* extra rules dir from -r option */
@@ -507,10 +508,13 @@ static void sigterm_cb(uev_t *w, void *arg, int events)
 	uev_exit(w->ctx);
 }
 
+/* Finit expects the pidfile touched to reassert readiness after SIGHUP */
 static void sighup_cb(uev_t *w, void *arg, int events)
 {
 	(void)w; (void)arg; (void)events;
 	kev_rules_reload();
+	if (ready)
+		pidfile(NULL);
 }
 
 static void sigchld_cb(uev_t *w, void *arg, int events)
@@ -613,6 +617,7 @@ static void coldplug_pidfile_cb(uev_t *w, void *arg, int events)
 		return;
 
 	pidfile(NULL);
+	ready = 1;
 	logit(LOG_NOTICE, "keventd ready, coldplug queue drained");
 	uev_timer_stop(w);
 }
@@ -826,6 +831,7 @@ int main(int argc, char *argv[])
 		logit(LOG_NOTICE, "keventd v%s started, draining coldplug queue...", KEVENTD_VERSION);
 	} else {
 		pidfile(NULL);
+		ready = 1;
 		logit(LOG_NOTICE, "keventd v%s started, waiting for events...", KEVENTD_VERSION);
 	}
 
