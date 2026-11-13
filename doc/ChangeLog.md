@@ -143,6 +143,10 @@ All relevant changes are documented in this file.
 - Service `user:` and `group:` names, including supplementary groups, can
   now be up to 63 characters, up from 15.  Longer names were silently
   truncated before the lookup, so the service never started.  By Anees Rehman
+- A service can have more than four supplementary groups, `extra-groups` or
+  `@user:group,sup1,sup2,...`.  The list may now be up to 511 characters.
+  Groups dropped from a service's configuration are now also dropped the
+  next time it starts, before they lingered until reboot
 - `stop:` and `reload:` scripts take a timeout of their own, `stop:5,/path`,
   defaulting to the kill delay as before.  Such a line used to crash Finit at
   config load
