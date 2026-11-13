@@ -39,6 +39,9 @@ All relevant changes are documented in this file.
   characters.  Groups dropped from a service's configuration are now
   also dropped the next time it starts, before they lingered until
   reboot
+- Fix a service's group lingering after it was dropped from the
+  configuration, e.g. `@alice:wheel` changed to `@alice` kept running
+  as `wheel` until reboot
 - Remove stale daemon-owned (`pid:!`) pidfiles after unclean exits.
   When a daemon dies via SIGKILL/OOM/segfault, or exits early during
   startup, its pidfile lingers and can prevent the next instance from

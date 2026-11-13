@@ -2142,6 +2142,7 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 			svc_unblock(svc);
 	}
 
+	svc->group[0] = 0;
 	svc->supgroups[0] = 0;
 	if (username) {
 		char *ptr = strchr(username, ':');

@@ -1,14 +1,19 @@
 #!/bin/sh
-# Verify supplementary groups, @user:group,sup1,sup2,..., are all set on
-# the service, and that dropping them drops the groups.
+# Verify group and supplementary groups, @user:group,sup1,sup2,..., are
+# set on the service, and that dropping either drops the group(s) too.
 set -eu
 
 TEST_DIR=$(dirname "$0")
 
-# Optional argument is the supplementary group list, ",sup1,sup2,..."
+# Optional arguments are the group and the supplementary group list,
+# ",sup1,sup2,...", the latter requires a group
 write_conf()
 {
-    run "echo 'service @root:root${1:-} name:grp serv -np -i grp -- Groups' > $FINIT_CONF"
+    user="@root"
+    if [ -n "${1:-}" ]; then
+	user="@root:$1${2:-}"
+    fi
+    run "echo 'service $user name:grp serv -np -i grp -- Groups' > $FINIT_CONF"
 }
 
 # Kernel sorts the list, so it compares as a plain string.
@@ -17,6 +22,13 @@ assert_groups()
     pid=$(texec initctl -j status grp | jq .pid)
     assert "Service groups == $1" \
 	   "$(texec cat "/proc/$pid/status" | sed -n 's/^Groups:[[:space:]]*//p' | xargs)" = "$1"
+}
+
+assert_gid()
+{
+    pid=$(texec initctl -j status grp | jq .pid)
+    assert "Service gid == $1" \
+	   "$(texec cat "/proc/$pid/status" | awk '/^Gid:/ {print $2}')" = "$1"
 }
 
 test_teardown()
@@ -29,7 +41,7 @@ test_teardown()
 . "$TEST_DIR/lib/setup.sh"
 
 say 'Seven supplementary groups'
-write_conf ',daemon,bin,sys,adm,tty,disk,dialout'
+write_conf root ',daemon,bin,sys,adm,tty,disk,dialout'
 run "initctl reload"
 
 retry 'assert_num_children 1 serv'
@@ -37,8 +49,19 @@ retry 'assert_groups "0 1 2 3 4 5 6 20"'
 
 # The running process keeps its groups, the next start drops them
 say 'Dropping supplementary groups drops the groups'
-write_conf
+write_conf root
 run "initctl reload"
 run "initctl restart grp"
 
 retry 'assert_groups "0"'
+
+say 'Dropping group drops the group'
+write_conf adm
+run "initctl reload"
+run "initctl restart grp"
+retry 'assert_gid 4'
+
+write_conf
+run "initctl reload"
+run "initctl restart grp"
+retry 'assert_gid 0'
