@@ -2156,9 +2156,10 @@ static void parse_cmdline_args(svc_t *svc, char *cmd, char **args)
 }
 
 /**
- * service_register - Register service, task or run commands
+ * service_register_desc - Register service, task or run commands
  * @type:   %SVC_TYPE_SERVICE(0), %SVC_TYPE_TASK(1), %SVC_TYPE_RUN(2)
- * @cfg:    Configuration, complete command, with -- for description text
+ * @cfg:    Configuration, complete command, without description text
+ * @desc:   Description text, or %NULL
  * @rlimit: Limits for this service/task/run, may be global limits
  * @file:   The file name service was loaded from
  *
@@ -2216,9 +2217,10 @@ static void parse_cmdline_args(svc_t *svc, char *cmd, char **args)
  * skipped on purpose -- conditional loading, bootstrap over, nowarn --
  * also returns %NULL, with @errno zero.
  */
-svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
+svc_t *service_register_desc(int type, char *cfg, const char *desc,
+			     struct rlimit rlimit[], char *file)
 {
-	char *cmd, *desc, *runlevels = NULL, *cond = NULL;
+	char *cmd, *runlevels = NULL, *cond = NULL;
 	char *username = NULL, *log = NULL, *pid = NULL;
 	char *name = NULL, *halt = NULL, *delay = NULL;
 	char *id = NULL, *env = NULL, *cgroup = NULL;
@@ -2252,24 +2254,6 @@ svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 	if (!line) {
 		errno = ENOMEM;
 		return NULL;
-	}
-
-	desc = strstr(line, "-- ");
-	if (desc) {
-		*desc = 0;
-		desc += 3;
-
-		while (*desc && isblank(*desc))
-			desc++;
-	} else {
-		int pos;
-
-		/* Find "--\n" to denote empty/no description */
-		pos = (int)strlen(line) - 2;
-		if (pos > 0 && !strcmp(&line[pos], "--")) {
-			line[pos] = 0;
-			desc = &line[pos];
-		}
 	}
 
 	args = line;
@@ -2737,6 +2721,45 @@ svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 	}
 
 	return svc;
+}
+
+/**
+ * service_register - Register from a legacy one-liner
+ * @type:   %SVC_TYPE_SERVICE(0), %SVC_TYPE_TASK(1), %SVC_TYPE_RUN(2)
+ * @cfg:    Configuration, complete command, with -- for description text
+ * @rlimit: Limits for this service/task/run, may be global limits
+ * @file:   The file name service was loaded from
+ *
+ * The first "-- " in @cfg starts the description, the rest is handed
+ * to service_register_desc().
+ */
+svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
+{
+	char *line, *desc;
+
+	if (!cfg)
+		return service_register_desc(type, cfg, NULL, rlimit, file);
+
+	line = strdupa(cfg);
+	desc = strstr(line, "-- ");
+	if (desc) {
+		*desc = 0;
+		desc += 3;
+
+		while (*desc && isblank(*desc))
+			desc++;
+	} else {
+		int pos;
+
+		/* Find "--\n" to denote empty/no description */
+		pos = (int)strlen(line) - 2;
+		if (pos > 0 && !strcmp(&line[pos], "--")) {
+			line[pos] = 0;
+			desc = &line[pos];
+		}
+	}
+
+	return service_register_desc(type, line, desc, rlimit, file);
 }
 
 /*

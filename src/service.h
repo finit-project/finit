@@ -44,6 +44,8 @@ extern const struct svcdir svcdirs[NUM_SVCDIRS];
 
 int	  service_set_dir	 (svc_t *svc, const struct svcdir *sd, const char *name);
 svc_t	 *service_register	 (int type, char *line, struct rlimit rlimit[], char *file);
+svc_t	 *service_register_desc  (int type, char *line, const char *desc,
+				  struct rlimit rlimit[], char *file);
 void      service_unregister     (svc_t *svc);
 
 void      service_runtask_clean  (void);

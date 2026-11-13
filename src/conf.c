@@ -1126,7 +1126,7 @@ static int sec_getbool(cfg_t *sec, const char *key, const char *alias)
  * The line-based format could only spell this as one stanza per
  * candidate, relying on nowarn to skip the ones that were not
  * installed.  A candidate not being there is not an error here, so
- * only the winner is looked up again by service_register().
+ * only the winner is looked up again by service_register_desc().
  *
  * A leading '-' still says a missing binary is expected, cf. systemd
  * ExecStart=-.
@@ -1443,7 +1443,7 @@ static void provides_translate(cfg_t *sec, svc_t *svc, char *file)
 /*
  * These have no legacy token, they are validated by service_set_dir()
  * and stored directly on the registered svc.  Empty means unset,
- * service_register() has already cleared the fields.
+ * service_register_desc() has already cleared the fields.
  */
 static void dirs_translate(cfg_t *sec, svc_t *svc, char *file)
 {
@@ -1728,11 +1728,9 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
 	/* the command and its arguments, verbatim */
 	addtok(line, sizeof(line), "%s", cmd);
 
-	if ((str = sec_getstr(sec, "description", "desc")))
-		addtok(line, sizeof(line), "-- %s", str);
-
+	str = sec_getstr(sec, "description", "desc");
 	dbg("translated: %s", line);
-	svc = service_register(type, line, rlimit, file);
+	svc = service_register_desc(type, line, str, rlimit, file);
 	if (!svc)
 		return;
 
@@ -1807,7 +1805,7 @@ static void tty_translate(cfg_t *sec, struct rlimit rlimit[], char *file)
 		addtok(line, sizeof(line), "%s", str);
 
 	dbg("translated: tty %s", line);
-	service_register(SVC_TYPE_TTY, line, rlimit, file);
+	service_register_desc(SVC_TYPE_TTY, line, NULL, rlimit, file);
 }
 
 /*

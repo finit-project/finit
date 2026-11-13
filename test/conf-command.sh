@@ -76,6 +76,19 @@ retry 'assert_cmd pick "serv -np -i pick"'
 assert_desc "Single command" pick
 assert_num_children 1 serv
 
+# The description has its own setting, so a -- in the command is an
+# argument to it, see issue #512.
+say 'A -- in the command is passed on to it'
+run "echo 'service pick {'                                >  $FINIT_CONF"
+run "echo '    description = \"Dashes\"'                   >> $FINIT_CONF"
+run "echo '    command     = \"serv -np -i pick -- extra\"' >> $FINIT_CONF"
+run "echo '}'                                             >> $FINIT_CONF"
+run "initctl reload"
+
+retry 'assert_cmd pick "serv -np -i pick -- extra"'
+assert_desc "Dashes" pick
+assert_num_children 1 serv
+
 # A tty block takes the same list, its command is the getty to run.
 # Asserting it is loaded is enough here, a getty in the test namespace
 # has no terminal to attach to.
@@ -90,7 +103,7 @@ retry 'assert_cmd tty "serv -np -i ttypick"'
 
 # Nothing resolves, so the block is skipped the same way a single
 # missing command is.  The leading - only decides whether that is
-# quiet, service_register() bails before svc_new() either way.
+# quiet, service_register_desc() bails before svc_new() either way.
 say 'A block whose candidates are all missing is skipped'
 run "echo 'service ghost {'                                >  $FINIT_CONF"
 run "echo '    command = { \"-/no/such/one\", \"-/no/such/two\" }' >> $FINIT_CONF"

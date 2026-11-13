@@ -153,6 +153,9 @@ All relevant changes are documented in this file.
 
 ### Fixes
 
+- Fix #512: `--` in the `command` of a block-format .conf, it was taken as the
+  start of the description, so `command = "cmd -- arg"` ran `cmd` with
+  description `arg`.  Found by Alexandru Paniș
 - Reject a .conf file that declares the same block title twice.  The title is
   the service identity and libConfuse merges two sections sharing one, so the
   file loaded as a single service holding a mix of both declarations,
