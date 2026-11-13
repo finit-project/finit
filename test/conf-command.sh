@@ -89,6 +89,16 @@ retry 'assert_cmd pick "serv -np -i pick -- extra"'
 assert_desc "Dashes" pick
 assert_num_children 1 serv
 
+# Options are matched as whole tokens, so a command that merely starts
+# like one, pidof vs. pid, is still the command.
+say 'A command named like an option is the command'
+run "echo 'task lookalike {'             >  $FINIT_CONF"
+run "echo '    command = \"pidof serv\"' >> $FINIT_CONF"
+run "echo '}'                            >> $FINIT_CONF"
+run "initctl reload"
+
+retry 'assert_cmd lookalike "pidof serv"'
+
 # A tty block takes the same list, its command is the getty to run.
 # Asserting it is loaded is enough here, a getty in the test namespace
 # has no terminal to attach to.

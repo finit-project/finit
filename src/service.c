@@ -1813,6 +1813,24 @@ static char *parse_args(char **line)
 }
 
 /*
+ * Match an option that takes a value, @opt on its own or followed by
+ * one of the characters in @sep, e.g. "log" and "log:/path".  Returns
+ * the value, or NULL, so a command like logger or pidof is not taken
+ * for an option.
+ */
+static char *is_opt(char *tok, const char *opt, const char *sep)
+{
+	size_t len = strlen(opt);
+
+	if (strncasecmp(tok, opt, len))
+		return NULL;
+	if (tok[len] && !strchr(sep, tok[len]))
+		return NULL;
+
+	return &tok[len];
+}
+
+/*
  * log:/path/to/logfile,priority:facility.level,tag:ident
  */
 static void parse_log(svc_t *svc, char *arg)
@@ -2265,6 +2283,10 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 		return NULL;
 	}
 
+	/*
+	 * Options ending in ':' can be prefix matched, the rest must match
+	 * the whole token or a command like logger is taken for one.
+	 */
 	while (cmd) {
 		char *arg;
 
@@ -2279,19 +2301,19 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 			cond = &cmd[1];
 		else if (cmd[0] == ':')	/* :ID */
 			id = &cmd[1];
-		else if (MATCH_CMD(cmd, "log", arg))
+		else if (is_opt(cmd, "log", ":"))
 			log = cmd;
-		else if (MATCH_CMD(cmd, "pid", arg))
+		else if (is_opt(cmd, "pid", ":"))
 			pid = cmd;
 		else if (MATCH_CMD(cmd, "name:", arg))
 			name = cmd;
 		else if (MATCH_CMD(cmd, "notify:", arg))
 			notify = arg;
-		else if (MATCH_CMD(cmd, "type:forking", arg))
+		else if (!strcasecmp(cmd, "type:forking"))
 			forking = 1;
-		else if (MATCH_CMD(cmd, "manual:yes", arg))
+		else if (!strcasecmp(cmd, "manual:yes"))
 			manual = 1;
-		else if (MATCH_CMD(cmd, "remain:yes", arg))
+		else if (!strcasecmp(cmd, "remain:yes"))
 			remain = 1;
 		else if (MATCH_CMD(cmd, "restart:", arg)) {
 			if (MATCH_CMD(arg, "always", arg))
@@ -2303,9 +2325,9 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 			restart_tmo = atoi(arg) * 1000;
 		else if (MATCH_CMD(cmd, "restart_sec:", arg))
 			restart_tmo = atoi(arg) * 1000;
-		else if (MATCH_CMD(cmd, "norestart", arg))
+		else if (!strcasecmp(cmd, "norestart"))
 			restart_max = 0;
-		else if (MATCH_CMD(cmd, "nowarn", arg))
+		else if (!strcasecmp(cmd, "nowarn"))
 			nowarn = 1;
 		else if (MATCH_CMD(cmd, "oncrash:", arg)) {
 			if (MATCH_CMD(arg, "reboot", arg))
@@ -2313,7 +2335,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 			if (MATCH_CMD(arg, "script", arg))
 				oncrash_action = SVC_ONCRASH_SCRIPT;
 		}
-		else if (MATCH_CMD(cmd, "respawn", arg))
+		else if (!strcasecmp(cmd, "respawn"))
 			respawn = 1;
 		else if (MATCH_CMD(cmd, "halt:", arg))
 			halt = arg;
@@ -2338,7 +2360,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 		else if (MATCH_CMD(cmd, "tty:", arg))
 			ctty = arg;
 		/* catch both cgroup: and cgroup. handled in parse_cgroup() */
-		else if (MATCH_CMD(cmd, "cgroup", arg))
+		else if ((arg = is_opt(cmd, "cgroup", ".:")))
 			cgroup = arg;
 		else if (MATCH_CMD(cmd, "conflict:", arg))
 			conflict = arg;
