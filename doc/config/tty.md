@@ -21,6 +21,7 @@ Settings common to all three:
 |---|---|---|
 | `runlevel` | | Runlevels to run in, e.g. `"12345"` |
 | `conditions` | `cond` | Conditions to wait for |
+| `manual-start` | `manual` | Register without starting automatically |
 | `noclear` | | Do not clear the TTY after each session |
 | `nowait` | | Do not wait for Enter before the login prompt |
 | `nologin` | | Skip login, give a shell straight away |

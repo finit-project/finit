@@ -169,7 +169,8 @@ static int modules_load(const char *file, int index)
 			snprintf(cmd, sizeof(cmd), SERVICE_LINE, mod, index++, lvl, modprobe_path, mod, args);
 
 		dbg("task %s", cmd);
-		service_register(SVC_TYPE_TASK, cmd, global_rlimit, NULL);
+		service_register(SVC_TYPE_TASK, cmd, global_rlimit, NULL,
+				 SVC_SOURCE_ENABLED);
 		num++;
 	next:
 		free(line);

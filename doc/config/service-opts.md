@@ -48,6 +48,12 @@ It can then be started at any time with `initctl start <service>`:
         command      = "/usr/sbin/lldpd -d"
     }
 
+> [!NOTE]
+> With [`load-available`](files.md#loading-available-services) enabled,
+> units in `finit.d/available/` are prevented from automatic start by
+> their loader-derived available-only state.  This is independent of
+> `manual-start`, which takes effect normally after the unit is enabled.
+
 Other run/task/service settings are:
 
   * `capabilities` -- see the [Linux Capabilities](capabilities.md) section

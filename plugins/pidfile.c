@@ -103,10 +103,6 @@ static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
 
 	nm = svc_ident(svc, NULL, 0);
 	dbg("Found svc %s for %s with pid %d", nm, fn, svc->pid);
-	if (svc_is_stopping(svc)) {
-		dbg("Ignoring pidfile death rattles while service %s is %s", nm, svc_status(svc));
-		goto sneaky_zebra;
-	}
 
 	if (mask & (IN_CLOSE_WRITE | IN_ATTRIB | IN_MODIFY | IN_MOVED_TO)) {
 		/*
@@ -126,15 +122,12 @@ static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
 			pid_t pid;
 
 			pid = pid_file_read(fn);
-			if (pid == -1) {
-				/* handle case when service dies immediately */
+			if (pid <= 1) {
+				/* handle missing, empty, or otherwise invalid pidfiles */
 				if (!fexist(fn))
-				    cond_clear(cond);
+					cond_clear(cond);
 				return;
 			}
-
-			/* Service is not crashing, let's tell state machine! */
-			service_forked(svc);
 
 			if (pid != svc->pid) {
 				dbg("Forking service %s (cmd %s) changed PID from %d to %d",
@@ -145,6 +138,10 @@ static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
 				logit(LOG_CONSOLE | LOG_NOTICE, "Started %s[%d]", svc_ident(svc, NULL, 0), pid);
 				cgroup_move_svc(svc);
 			}
+
+			/* Service is not crashing, let's tell state machine! */
+			if (!service_forked(svc))
+				return;
 		}
 
 		if (svc->notify == SVC_NOTIFY_PID)
@@ -152,7 +149,6 @@ static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
 		if (svc->notify == SVC_NOTIFY_PID || svc->notify == SVC_NOTIFY_NONE)
 			service_ready(svc, 1);
 	} else if (mask & IN_DELETE) {
-	sneaky_zebra:
 		svc_cond_clear(svc);
 		if (svc->notify == SVC_NOTIFY_PID)
 			service_ready(svc, 0);

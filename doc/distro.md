@@ -101,6 +101,30 @@ directory (e.g., `/etc/finit.d/`), `initctl` will ignore it. This allows
 you to create system-level overrides that cannot be accidentally disabled
 by package management tools.
 
+### Runtime Control Without Enabling
+
+By default, a `.conf` that only exists in `available/` is not loaded at
+all, so `initctl start` cannot control it -- enabling (load) and starting
+at boot are one and the same switch.  Products that need the systemd-like
+separation between "starts at boot" and "can be started/stopped at
+runtime" can enable the `load-available` setting in `/etc/finit.conf`:
+
+```
+load-available = true
+```
+
+With this setting, unit stanzas in `available/` are loaded with an
+internal available-only source state: they show up in `initctl status`
+and can be started and stopped freely, yet they do not start
+automatically until enabled.  This state is independent of the unit's
+`manual-start` option.  Top-level settings in an available-only file
+remain inactive.  Enabling the file activates those settings and makes
+the unit follow `manual-start`; disabling it no longer makes a service
+uncontrollable (a running instance is not stopped by `initctl reload`,
+mirroring `systemctl disable`).  See
+[config/files.md](config/files.md#loading-available-services) for
+details.
+
 ## Customizing Directory Paths
 
 Distributions can customize the directory names and locations at build time

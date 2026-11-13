@@ -97,6 +97,15 @@ char *runparts = NULL;
 int   runparts_progress;
 int   runparts_sysv;
 
+/*
+ * Load units from available/ as available-only: they are registered and
+ * controllable with initctl, but source state prevents automatic start
+ * until enabled.  Off by default, set with the top-level load-available
+ * setting in /etc/finit.conf and reset on every reload.
+ */
+static int load_available;
+static int available_context;
+
 char cgroup_current[CGROUP_NAME_SIZE];              /* cgroup.NAME sets current cgroup for a set of services */
 char cgroup_settings_current[CGROUP_SETTINGS_SIZE]; /* cgroup.system,cpu.weight:500 - cgroup settings */
 int  cgroup_delegate_current;                       /* cgroup.system,delegate - delegation flag */
@@ -311,6 +320,8 @@ static cfg_opt_t tty_opts[] = {
 	CFG_STR     ("runlevel",  NULL, CFGF_NODEFAULT),
 	CFG_STR_LIST("conditions", NULL, CFGF_NODEFAULT),
 	CFG_STR_LIST("cond",      NULL, CFGF_NODEFAULT),	/* alias */
+	CFG_BOOL    ("manual-start", cfg_false, CFGF_NODEFAULT),
+	CFG_BOOL    ("manual",       cfg_false, CFGF_NODEFAULT),	/* alias */
 	CFG_STR     ("device",    NULL, CFGF_NODEFAULT),
 	CFG_INT     ("baud",      0,    CFGF_NODEFAULT),
 	CFG_STR     ("term",      NULL, CFGF_NODEFAULT),
@@ -352,6 +363,7 @@ static cfg_opt_t conf_opts[] = {
 	CFG_STR_LIST("mod",              NULL, CFGF_NODEFAULT),	/* alias */
 	CFG_STR_LIST("mknod",            NULL, CFGF_NODEFAULT),
 	CFG_STR     ("network",          NULL, CFGF_NODEFAULT),
+	CFG_BOOL    ("load-available",   cfg_false, CFGF_NODEFAULT),
 	CFG_STR     ("rcsd",             NULL, CFGF_NODEFAULT),
 	CFG_STR     ("runparts",         NULL, CFGF_NODEFAULT),
 	CFG_BOOL    ("runparts-progress", cfg_false, CFGF_NODEFAULT),
@@ -1117,6 +1129,31 @@ static int sec_getbool(cfg_t *sec, const char *key, const char *alias)
 }
 
 /*
+ * True if FILE is in the available/ sub-directory of rcsd and the
+ * load-available setting is active.  This selects the restricted parse
+ * context in conf_reload(); nested legacy includes inherit that context.
+ */
+static int conf_is_available(const char *file)
+{
+	char path[strlen(finit_rcsd) + 12];
+
+	if (!load_available || !file)
+		return 0;
+
+	snprintf(path, sizeof(path), "%s/available/", finit_rcsd);
+
+	return !strncmp(file, path, strlen(path));
+}
+
+/* Check that a configuration path can actually be parsed. */
+static int conf_is_file(const char *file)
+{
+	struct stat st;
+
+	return !stat(file, &st) && !S_ISDIR(st.st_mode);
+}
+
+/*
  * Pick the command for a service.  Several may be listed, in which
  * case they are candidates for the same service and the first one
  * whose binary resolves wins:
@@ -1428,6 +1465,9 @@ static void provides_translate(cfg_t *sec, svc_t *svc, char *file)
 		}
 
 		owner = svc_cond_owner(cond, svc);
+		if (owner && svc_is_available(owner) && !svc_is_available(svc) &&
+		    svc_provides_remove(owner, cond))
+			owner = NULL;
 		if (owner) {
 			logit(LOG_WARNING, "%s: %s: provides condition <%s>"
 			      " already registered by service %s, ignoring",
@@ -1524,7 +1564,8 @@ static void pam_translate(cfg_t *sec, svc_t *svc, char *file)
 		      file, cfg_title(sec));
 }
 
-static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *file)
+static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *file,
+			  int is_available)
 {
 	struct rlimit local_rlimit[RLIMIT_NLIMITS];
 	char line[LINE_SIZE] = "";
@@ -1638,6 +1679,7 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
 			      file, str);
 	}
 
+	/* manual-start is independent of available/enabled source state. */
 	if (sec_getbool(sec, "manual-start", "manual"))
 		addtok(line, sizeof(line), "manual:yes");
 	if (sec_getbool(sec, "remain-after-exit", "remain"))
@@ -1732,7 +1774,7 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
 		addtok(line, sizeof(line), "-- %s", str);
 
 	dbg("translated: %s", line);
-	svc = service_register(type, line, rlimit, file);
+	svc = service_register(type, line, rlimit, file, is_available ? SVC_SOURCE_AVAILABLE_ONLY : SVC_SOURCE_ENABLED);
 	if (!svc)
 		return;
 
@@ -1745,7 +1787,8 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
  * Translate tty section, covering all three legacy variants:
  * device (built-in getty), command (external getty), notty/rescue.
  */
-static void tty_translate(cfg_t *sec, struct rlimit rlimit[], char *file)
+static void tty_translate(cfg_t *sec, struct rlimit rlimit[], char *file,
+			  int is_available)
 {
 	char line[LINE_SIZE] = "";
 	const char *str, *dev, *cmd;
@@ -1757,6 +1800,9 @@ static void tty_translate(cfg_t *sec, struct rlimit rlimit[], char *file)
 
 	if (sec_getlist(sec, "conditions", "cond", buf, sizeof(buf)))
 		addtok(line, sizeof(line), "<%s>", buf);
+
+	if (sec_getbool(sec, "manual-start", "manual"))
+		addtok(line, sizeof(line), "manual:yes");
 
 	dev = sec_getstr(sec, "device", NULL);
 	cmd = svc_command(sec, &nowarn);
@@ -1807,7 +1853,8 @@ static void tty_translate(cfg_t *sec, struct rlimit rlimit[], char *file)
 		addtok(line, sizeof(line), "%s", str);
 
 	dbg("translated: tty %s", line);
-	service_register(SVC_TYPE_TTY, line, rlimit, file);
+	service_register(SVC_TYPE_TTY, line, rlimit, file,
+			 is_available ? SVC_SOURCE_AVAILABLE_ONLY : SVC_SOURCE_ENABLED);
 }
 
 /*
@@ -1972,7 +2019,52 @@ static int secref_cmp(const void *a, const void *b)
 	return (int)sa->line - (int)sb->line;
 }
 
-static int conf_parse_cfg(cfg_t *cfg, char *file, int is_rcsd)
+static int cfg_section_has_values(cfg_t *cfg, const char *name)
+{
+	cfg_t *sec = cfg_getsec(cfg, name);
+	cfg_opt_t *opt;
+
+	if (!sec)
+		return 0;
+
+	for (opt = sec->opts; opt && opt->name; opt++) {
+		if (cfg_opt_size(opt))
+			return 1;
+	}
+
+	return 0;
+}
+
+static int cfg_has_global_settings(cfg_t *cfg)
+{
+	cfg_opt_t *opt;
+
+	for (opt = cfg->opts; opt && opt->name; opt++) {
+		const char *name = opt->name;
+
+		/* Unit sections and file-local limits are valid in available/. */
+		if (!strcmp(name, "service") || !strcmp(name, "task") ||
+		    !strcmp(name, "run") || !strcmp(name, "sysv") ||
+		    !strcmp(name, "tty") || !strcmp(name, "rlimit") ||
+		    !strcmp(name, "include"))
+			continue;
+
+		/* Non-MULTI sections exist even when none of their keys are set. */
+		if (!strcmp(name, "environment") || !strcmp(name, "env") ||
+		    !strcmp(name, "log")) {
+			if (cfg_section_has_values(cfg, name))
+				return 1;
+			continue;
+		}
+
+		if (cfg_opt_size(opt))
+			return 1;
+	}
+
+	return 0;
+}
+
+static int conf_parse_cfg(cfg_t *cfg, char *file, int is_rcsd, int is_available)
 {
 	static const struct { const char *name; int type; } map[] = {
 		{ "service", SVC_TYPE_SERVICE },
@@ -1990,19 +2082,41 @@ static int conf_parse_cfg(cfg_t *cfg, char *file, int is_rcsd)
 	if (is_rcsd) {
 		memcpy(rlimit, global_rlimit, sizeof(rlimit));
 		cgroup_current[0] = 0;
+		cgroup_settings_current[0] = 0;
+		cgroup_delegate_current = 0;
 		arr = rlimit;
 	} else
 		arr = global_rlimit;
 
-	conf_parse_statics(cfg);
+	/*
+	 * Load .conf files in available/ as manual-start services?  Only
+	 * honored from /etc/finit.conf, which conf_reload() parses, after
+	 * resetting this setting, before it globs the .conf directories.
+	 */
+	if (!is_rcsd && cfg_size(cfg, "load-available"))
+		load_available = sec_getbool(cfg, "load-available", NULL);
 
-	/* top-level cgroup definitions */
-	for (i = 0; i < cfg_size(cfg, "cgroup"); i++) {
-		cfg_t *cg = cfg_getnsec(cfg, "cgroup", i);
-		char buf[512];
+	/*
+	 * available/ is a pool of startable units, not active system
+	 * configuration.  File-scope rlimits below are retained because
+	 * they only affect units in this file; all global settings wait
+	 * until the file is enabled and parsed through enabled/.
+	 */
+	if (is_available) {
+		if (cfg_has_global_settings(cfg))
+			logit(LOG_WARNING, "%s: ignoring top-level settings from available/"
+			      " until enabled", file);
+	} else {
+		conf_parse_statics(cfg);
 
-		cgroup_add((char *)cfg_title(cg),
-			   cgroup_settings(cg, buf, sizeof(buf), file, 0), 0);
+		/* top-level cgroup definitions */
+		for (i = 0; i < cfg_size(cfg, "cgroup"); i++) {
+			cfg_t *cg = cfg_getnsec(cfg, "cgroup", i);
+			char buf[512];
+
+			cgroup_add((char *)cfg_title(cg),
+				   cgroup_settings(cg, buf, sizeof(buf), file, 0), 0);
+		}
 	}
 
 	/* file-scope resource limits, applies to all services in file */
@@ -2036,9 +2150,9 @@ static int conf_parse_cfg(cfg_t *cfg, char *file, int is_rcsd)
 
 	for (i = 0; i < num; i++) {
 		if (refs[i].type == SVC_TYPE_TTY)
-			tty_translate(refs[i].sec, arr, file);
+			tty_translate(refs[i].sec, arr, file, is_available);
 		else
-			svc_translate(refs[i].sec, refs[i].type, arr, file);
+			svc_translate(refs[i].sec, refs[i].type, arr, file, is_available);
 	}
 
 	free(refs);
@@ -2212,6 +2326,7 @@ int conf_parse_file(char *file, int is_rcsd)
 	char *buf = NULL;
 	cfg_t *cfg;
 	int rc;
+	int is_available = available_context > 0;
 
 	/*
 	 * Template files (name@.conf, name@id.conf).  A bare name@.conf
@@ -2234,7 +2349,7 @@ int conf_parse_file(char *file, int is_rcsd)
 
 	cfg = cfg_init(conf_opts, CFGF_NONE);
 	if (!cfg) {
-		rc = legacy_parse_conf(file, buf, is_rcsd);
+		rc = legacy_parse_conf(file, buf, is_rcsd, is_available);
 		goto done;
 	}
 
@@ -2242,7 +2357,7 @@ int conf_parse_file(char *file, int is_rcsd)
 	rc = conf_parse_any(cfg, file, buf);
 	if (rc == CFG_SUCCESS) {
 		dbg("*** Parsing %s (new format)", file);
-		rc = conf_parse_cfg(cfg, file, is_rcsd);
+		rc = conf_parse_cfg(cfg, file, is_rcsd, is_available);
 		cfg_free(cfg);
 		goto done;
 	}
@@ -2260,14 +2375,26 @@ int conf_parse_file(char *file, int is_rcsd)
 	}
 
 	dbg("not in new format (%s), falling back to legacy parser", cfg_errmsg);
-	rc = legacy_parse_conf(file, buf, is_rcsd);
+	rc = legacy_parse_conf(file, buf, is_rcsd, is_available);
 done:
 	free(buf);
 
 	return rc;
 }
 
-static void glob_append(glob_t *gl, int append, const char *fmt, ...)
+static int conf_parse_available(char *file, int is_rcsd)
+{
+	int rc;
+
+	/* A counter lets nested legacy includes inherit the source policy. */
+	available_context++;
+	rc = conf_parse_file(file, is_rcsd);
+	available_context--;
+
+	return rc;
+}
+
+static void glob_append(glob_t *gl, int *append, const char *fmt, ...)
 {
 	va_list ap;
 	size_t len;
@@ -2288,7 +2415,8 @@ static void glob_append(glob_t *gl, int append, const char *fmt, ...)
 	va_end(ap);
 
 	dbg("conf_reload(): glob %s ...", path);
-	glob(path, append ? GLOB_APPEND : 0, NULL, gl);
+	if (!glob(path, *append ? GLOB_APPEND : 0, NULL, gl))
+		*append = 1;
 }
 
 /*
@@ -2296,7 +2424,8 @@ static void glob_append(glob_t *gl, int append, const char *fmt, ...)
  */
 int conf_reload(void)
 {
-	glob_t gl;
+	glob_t gl = { 0 };
+	int append = 0;
 	size_t i;
 
 	/* Set time according to current time zone */
@@ -2330,13 +2459,20 @@ int conf_reload(void)
 		/* If rescue.conf is missing, fall back to a root shell */
 		rc = conf_parse_file(RESCUE_CONF, 0);
 		if (rc)
-			service_register(SVC_TYPE_TTY, line, global_rlimit, NULL);
+			service_register(SVC_TYPE_TTY, line, global_rlimit, NULL,
+					 SVC_SOURCE_ENABLED);
 
 		print(rc, "Entering rescue mode");
 		goto done;
 	}
 
-	/* First, read /etc/finit.conf */
+	/*
+	 * First, read /etc/finit.conf.  Reset load-available first: it
+	 * is only set from finit.conf, which may be missing, or in the
+	 * legacy format that cannot express it, and then the default
+	 * (off) applies again.
+	 */
+	load_available = 0;
 	conf_parse_file(finit_conf, 0);
 
 	/* Set global limits */
@@ -2356,16 +2492,28 @@ int conf_reload(void)
 	 * so /etc/finit.d, always read last, is how users override any
 	 * built-in or bundled configuration.
 	 *
+	 * With load-available enabled, .conf files in available/ are
+	 * read as well, first of all: it is a passive staging pool, so
+	 * any same-named file in the other directories overrides it,
+	 * both built-in services and enabled/ symlinks back into it.
+	 * Unit stanzas from it are registered as available-only.  This source
+	 * state is separate from manual-start and prevents automatic start.
+	 * Top-level settings are ignored until enabled, so an available-only
+	 * file cannot alter global state.  Enabling a service overrides the
+	 * available/ copy and restores normal source handling.
+	 *
 	 * The .conf files (and their run/task/service stanzas) are
 	 * parsed and started in order.  Each directory is sorted
 	 * alphanumerically before being appended to the overall order,
 	 * recorded in /run/finit/conf.order at bootstrap.  See
 	 * doc/config/files.md for an example.
 	 */
-	glob_append(&gl, 0, "%s/*.conf", FINIT_RUNPATH_);
-	glob_append(&gl, 1, "%s/*.conf", FINIT_SYSPATH_);
-	glob_append(&gl, 1, "%s/*.conf", finit_rcsd);
-	glob_append(&gl, 1, "%s/enabled/*.conf", finit_rcsd);
+	if (load_available)
+		glob_append(&gl, &append, "%s/available/*.conf", finit_rcsd);
+	glob_append(&gl, &append, "%s/*.conf", FINIT_RUNPATH_);
+	glob_append(&gl, &append, "%s/*.conf", FINIT_SYSPATH_);
+	glob_append(&gl, &append, "%s/*.conf", finit_rcsd);
+	glob_append(&gl, &append, "%s/enabled/*.conf", finit_rcsd);
 
 	if (bootstrap) {
 		const char *fn = _PATH_VARRUN "finit/conf.order";
@@ -2388,14 +2536,20 @@ int conf_reload(void)
 		struct stat st;
 		size_t j, len;
 
-		/* check for FINIT_SYSPATH_ or FINIT_RUNPATH_ overrides */
+		/*
+		 * Check for FINIT_SYSPATH_, FINIT_RUNPATH_, or when
+		 * load-available is enabled, available/ overrides: a
+		 * same-named file in a later directory replaces this one.
+		 */
 		for (j = i + 1; j < gl.gl_pathc; j++) {
 			if (strncmp(path, FINIT_SYSPATH_, strlen(FINIT_SYSPATH_)) &&
-			    strncmp(path, FINIT_RUNPATH_, strlen(FINIT_RUNPATH_)))
+			    strncmp(path, FINIT_RUNPATH_, strlen(FINIT_RUNPATH_)) &&
+			    !conf_is_available(path))
 				continue;
-			if (strcmp(basenm(path), basenm(gl.gl_pathv[j])))
+			if (strcmp(basenm(path), basenm(gl.gl_pathv[j])) ||
+			    !conf_is_file(gl.gl_pathv[j]))
 				continue;
-			path = NULL; /* replacement later in list, skip this */
+			path = NULL; /* valid replacement later in list, skip this */
 			break;
 		}
 
@@ -2427,6 +2581,8 @@ int conf_reload(void)
 		len = strlen(path);
 		if (len < 6 || strcmp(&path[len - 5], ".conf"))
 			dbg("Skipping %s, not a Finit .conf file ... ", path);
+		else if (conf_is_available(path))
+			conf_parse_available(path, 1);
 		else
 			conf_parse_file(path, 1);
 

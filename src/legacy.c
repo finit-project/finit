@@ -72,10 +72,26 @@ static void conf_parse_cgroup(char *line)
 	cgroup_add(name, config, 0);
 }
 
-static int parse_static(char *line, int is_rcsd)
+static int parse_static(char *line, int is_rcsd, int is_available)
 {
 	char cmd[CMD_SIZE];
 	char *x;
+
+	/* Includes inherit the available/ parsing context from conf.c. */
+	if (MATCH_CMD(line, "include ", x)) {
+		char *file = strip_line(x);
+
+		strlcpy(cmd, file, sizeof(cmd));
+		if (!fexist(cmd)) {
+			errx(1, "Cannot find include file %s, absolute path required!", x);
+			return 1;
+		}
+
+		return conf_parse_file(cmd, is_rcsd);
+	}
+
+	if (is_available)
+		return 1;
 
 	if (BOOTSTRAP && (MATCH_CMD(line, "host ", x) || MATCH_CMD(line, "hostname ", x))) {
 		if (hostname) free(hostname);
@@ -128,18 +144,6 @@ static int parse_static(char *line, int is_rcsd)
 	if (BOOTSTRAP && MATCH_CMD(line, "set ", x)) {
 		conf_set_env(x);
 		return 0;
-	}
-
-	if (MATCH_CMD(line, "include ", x)) {
-		char *file = strip_line(x);
-
-		strlcpy(cmd, file, sizeof(cmd));
-		if (!fexist(cmd)) {
-			errx(1, "Cannot find include file %s, absolute path required!", x);
-			return 1;
-		}
-
-		return conf_parse_file(cmd, is_rcsd);
 	}
 
 	if (MATCH_CMD(line, "log ", x)) {
@@ -232,31 +236,39 @@ static int parse_static(char *line, int is_rcsd)
 	return 1;
 }
 
-static int parse_dynamic(char *line, struct rlimit rlimit[], char *file)
+/* Register the unit with its loader-derived source; this is not syntax. */
+static void svc_register_source(int type, char *line, struct rlimit rlimit[], char *file,
+				int is_available)
+{
+	service_register(type, line, rlimit, file,
+			 is_available ? SVC_SOURCE_AVAILABLE_ONLY : SVC_SOURCE_ENABLED);
+}
+
+static int parse_dynamic(char *line, struct rlimit rlimit[], char *file, int is_available)
 {
 	char *x;
 
 	/* Monitored daemon, will be respawned on exit */
 	if (MATCH_CMD(line, "service ", x)) {
-		service_register(SVC_TYPE_SERVICE, x, rlimit, file);
+		svc_register_source(SVC_TYPE_SERVICE, x, rlimit, file, is_available);
 		return 0;
 	}
 
 	/* One-shot task, will not be respawned */
 	if (MATCH_CMD(line, "task ", x)) {
-		service_register(SVC_TYPE_TASK, x, rlimit, file);
+		svc_register_source(SVC_TYPE_TASK, x, rlimit, file, is_available);
 		return 0;
 	}
 
 	/* Like task but waits for completion, useful w/ [S] */
 	if (MATCH_CMD(line, "run ", x)) {
-		service_register(SVC_TYPE_RUN, x, rlimit, file);
+		svc_register_source(SVC_TYPE_RUN, x, rlimit, file, is_available);
 		return 0;
 	}
 
 	/* Similar to task but is treated like a SysV init script */
 	if (MATCH_CMD(line, "sysv ", x)) {
-		service_register(SVC_TYPE_SYSV, x, rlimit, file);
+		svc_register_source(SVC_TYPE_SYSV, x, rlimit, file, is_available);
 		return 0;
 	}
 
@@ -268,6 +280,8 @@ static int parse_dynamic(char *line, struct rlimit rlimit[], char *file)
 
 	/* Read control group limits */
 	if (MATCH_CMD(line, "cgroup ", x)) {
+		if (is_available)
+			return 1;
 		conf_parse_cgroup(x);
 		return 0;
 	}
@@ -275,6 +289,9 @@ static int parse_dynamic(char *line, struct rlimit rlimit[], char *file)
 	/* Set current cgroup for the following services/run/tasks */
 	if (MATCH_CMD(line, "cgroup.", x)) {
 		char *group, *token, *saveptr;
+
+		if (is_available)
+			return 1;
 		char settings[128] = {0};
 
 		/* Reset cgroup state */
@@ -311,7 +328,7 @@ static int parse_dynamic(char *line, struct rlimit rlimit[], char *file)
 
 	/* Regular or serial TTYs to run getty */
 	if (MATCH_CMD(line, "tty ", x)) {
-		service_register(SVC_TYPE_TTY, strip_line(x), rlimit, file);
+		svc_register_source(SVC_TYPE_TTY, strip_line(x), rlimit, file, is_available);
 		return 0;
 	}
 
@@ -323,9 +340,10 @@ static int parse_dynamic(char *line, struct rlimit rlimit[], char *file)
  * instantiated it, i.e. for a template.  Either way the text arriving
  * here is final, no %i is left to substitute.
  */
-int legacy_parse_conf(char *file, char *buf, int is_rcsd)
+int legacy_parse_conf(char *file, char *buf, int is_rcsd, int is_available)
 {
 	struct rlimit rlimit[RLIMIT_NLIMITS];
+	int warned = 0;
 	FILE *fp;
 
 	if (buf)
@@ -339,6 +357,8 @@ int legacy_parse_conf(char *file, char *buf, int is_rcsd)
 	if (is_rcsd) {
 		memcpy(rlimit, global_rlimit, sizeof(rlimit));
 		cgroup_current[0] = 0;
+		cgroup_settings_current[0] = 0;
+		cgroup_delegate_current = 0;
 	}
 
 	dbg("*** Parsing %s", file);
@@ -351,12 +371,18 @@ int legacy_parse_conf(char *file, char *buf, int is_rcsd)
 
 		tabstospaces(line);
 
-		if (!parse_static(line, is_rcsd))
+		if (!parse_static(line, is_rcsd, is_available))
 			;
-		else if (!parse_dynamic(line, is_rcsd ? rlimit : global_rlimit, file))
+		else if (!parse_dynamic(line, is_rcsd ? rlimit : global_rlimit, file,
+					is_available))
 			;
-		else
+		else if (!is_available)
 			conf_set_env(line);
+		else if (*strip_line(line) && !warned) {
+			logit(LOG_WARNING, "%s: ignoring top-level settings from available/"
+			      " until enabled", file);
+			warned = 1;
+		}
 
 		free(line);
 	}

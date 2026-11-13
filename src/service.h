@@ -43,7 +43,8 @@ struct svcdir {
 extern const struct svcdir svcdirs[NUM_SVCDIRS];
 
 int	  service_set_dir	 (svc_t *svc, const struct svcdir *sd, const char *name);
-svc_t	 *service_register	 (int type, char *line, struct rlimit rlimit[], char *file);
+svc_t	 *service_register	 (int type, char *line, struct rlimit rlimit[], char *file,
+				  svc_source_t source);
 void      service_unregister     (svc_t *svc);
 
 void      service_runtask_clean  (void);
@@ -56,7 +57,7 @@ int       service_timeout_after  (svc_t *svc, int timeout, void (*cb)(svc_t *svc
 int       service_timeout_cancel (svc_t *svc);
 void      compose_cmdline        (svc_t *svc, char *buf, size_t len);
 
-void      service_forked         (svc_t *svc);
+int       service_forked         (svc_t *svc);
 void      service_ready          (svc_t *svc, int ready);
 
 int       service_stop           (svc_t *svc);

@@ -118,6 +118,11 @@ typedef enum {
  *
  *   initctl <stop|start|restart> service
  */
+typedef enum {
+	SVC_SOURCE_ENABLED,
+	SVC_SOURCE_AVAILABLE_ONLY,
+} svc_source_t;
+
 typedef struct svc {
 	TAILQ_ENTRY(svc) link;
 
@@ -139,7 +144,8 @@ typedef struct svc {
 	const svc_state_t state;       /* Paused, Reloading, Restart, Running, ... */
 	svc_type_t     type;	       /* Service, run, task, ... */
 	char           protect;        /* Services like dbus-daemon & udev by Finit */
-	char           manual;	       /* run/task that require `initctl start foo` */
+	char           manual;	       /* Requires an explicit `initctl start foo` */
+	svc_source_t   source;         /* Enabled config or available-only pool */
 	char           remain;	       /* run/task: stay in DONE state, run post: on stop */
 	char           nowarn;	       /* Skip or log warning if cmd missing or conflicts */
 	const int      dirty;	       /* 0: unmodified, 1: modified */
@@ -275,6 +281,7 @@ svc_t	   *svc_find_by_cond	   (const char *cond);
 svc_t	   *svc_cond_owner	   (const char *cond, svc_t *skip);
 const char *svc_cond_nth	   (svc_t *svc, int i, char *buf, size_t len);
 void	    svc_provides_reset	   (void);
+int         svc_provides_remove     (svc_t *svc, const char *cond);
 svc_t	   *svc_find_by_jobid      (int job, char *id);
 svc_t	   *svc_find_by_tty        (char *dev);
 svc_t      *svc_find_by_pidfile    (char *fn);
@@ -305,6 +312,7 @@ int         svc_ifthen             (int is_conf, const char *ident, char *stmt, 
 int         svc_parse_jobstr       (char *str, size_t len, void *user_data, int (*found)(svc_t *, void *), int (not_found)(char *, char *, void *));
 
 static inline int svc_is_daemon    (svc_t *svc) { return svc && (SVC_TYPE_DAEMON & svc->type); }
+static inline int svc_is_available (svc_t *svc) { return svc && svc->source == SVC_SOURCE_AVAILABLE_ONLY; }
 static inline int svc_is_sysv      (svc_t *svc) { return svc && SVC_TYPE_SYSV    == svc->type; }
 static inline int svc_is_tty       (svc_t *svc) { return svc && SVC_TYPE_TTY     == svc->type; }
 static inline int svc_is_runtask   (svc_t *svc) { return svc && (SVC_TYPE_RUNTASK & svc->type);}

@@ -2,7 +2,7 @@
 .\" First parameter, NAME, should be all caps
 .\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
 .\" other parameters are allowed: see man(7), man(1)
-.Dd July 10, 2025
+.Dd October 29, 2026
 .Dt FINIT.CONF 5 SMM
 .Os Linux
 .Sh NAME
@@ -61,6 +61,26 @@ service
 file.  Please use the
 .Cm initctl
 tool to manage these symlinks to ensure proper operation.
+.Pp
+By default, files in
+.Pa /etc/finit.d/available/
+are not loaded; a service must be enabled to be known to
+.Nm Finit .
+With the
+.Cm load-available = true
+setting in
+.Pa /etc/finit.conf
+(new block-based format only), unit stanzas in
+.Pa available/
+are registered with an internal available-only source state and are
+controllable with
+.Cm initctl start/stop ,
+but are not started automatically until enabled.  This state is separate
+from the unit's
+.Cm manual-start
+option.  Top-level settings in those files remain inactive until enabled.
+See the Finit documentation for details and the bootstrap-only runlevel
+limitation.
 .Pp
 .Sy NOTE:
 Previous versions of

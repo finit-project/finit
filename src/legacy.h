@@ -24,7 +24,7 @@
 #ifndef FINIT_LEGACY_H_
 #define FINIT_LEGACY_H_
 
-int   legacy_parse_conf (char *file, char *buf, int is_rcsd);
+int   legacy_parse_conf (char *file, char *buf, int is_rcsd, int is_available);
 void  legacy_parse_env  (char *line);
 
 #endif	/* FINIT_LEGACY_H_ */

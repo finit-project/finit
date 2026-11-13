@@ -57,11 +57,20 @@ being where they are installed and if the `initctl` tool can manage them
 with the `enable` and `disable` commands.  An administrator can always
 create files and symlinks manually.
 
+By default, `available/` is only a staging area, its files are *not*
+read by Finit.  With the [`load-available`](#loading-available-services)
+setting enabled, their unit stanzas are registered as *available-only*:
+controllable with `initctl start/stop`, but never started automatically
+until enabled.  This loader state is separate from `manual-start`, and
+top-level settings remain inactive.
+
 At bootstrap, and `initctl reload`, all .conf files are read, starting
 with `finit.conf`, then `/run/finit/system/*.conf`,
 `/lib/finit/system/*.conf`, `finit.d/*.conf`, and finally all
-`finit.d/enabled/*.conf` files.  Each directory is a unique group,
-where files within each group are sorted alphabetically.
+`finit.d/enabled/*.conf` files.  With `load-available` enabled,
+`finit.d/available/*.conf` is read first of all, so a same-named file
+in any of the other directories overrides it.  Each directory is a
+unique group, where files within each group are sorted alphabetically.
 
 **Example:**
 
@@ -203,6 +212,50 @@ another set of .conf files, e.g.:
 > [!NOTE]
 > This directive is only available from the top-level bootstrap .conf
 > file, usually `/etc/finit.conf`.
+
+Loading Available Services
+--------------------------
+
+**Syntax:** `load-available = true`
+
+By default Finit only reads `finit.d/enabled/*.conf`, so a service that
+has been installed in `finit.d/available/` but not enabled is unknown to
+Finit and `initctl start` fails with *no such task or service*.  This
+setting makes Finit read `finit.d/available/*.conf` as well, so such
+services can be started and stopped at runtime without being enabled,
+i.e., without starting automatically at boot:
+
+    load-available = true
+
+Run, task, service, sysv, and tty stanzas from `available/` are marked
+available-only by the loader.  There is no configuration key for this
+state, and includes inherit it.  `manual-start` remains an independent
+unit option: it does not enable an available-only unit, even when set to
+`false`.
+
+Enabling a service (a symlink in `enabled/`, read last) makes its logical
+source enabled.  The unit then follows its own `manual-start` setting:
+`true` remains manual, while `false` or an omitted setting permits normal
+automatic start.  Disabling it again leaves it loaded and startable with
+`initctl start`; a running instance is not stopped merely by reload.
+
+Only units and their file-scope resource limits are loaded from an
+available-only file.  Top-level settings, such as `environment`,
+`cgroup`, `modules`, `mknod`, `runlevel`, and `shutdown`, are ignored
+with a warning until the file is enabled.  Unit-local settings such as
+`envfile`, `log`, `cgroup`, and `rlimit` remain active so the unit can be
+started manually.
+
+Units restricted to the bootstrap `S` runlevel retain the normal Finit
+lifecycle: they are discarded after bootstrap and cannot be started in
+a regular runlevel.  Enable them before the next boot to run them.
+
+> [!NOTE]
+> Like `rcsd`, this directive is only available from the top-level
+> bootstrap .conf file, usually `/etc/finit.conf`, and only in the
+> block-based format.  A legacy format `finit.conf` can enable the
+> feature with `include /path/to.conf`, where the included block-based
+> file sets it.
 
 Including Finit Configs
 ------------------------

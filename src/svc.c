@@ -553,6 +553,27 @@ void svc_provides_reset(void)
 		svc->num_provides = 0;
 }
 
+int svc_provides_remove(svc_t *svc, const char *cond)
+{
+	int i;
+
+	if (!svc || !cond)
+		return 0;
+
+	for (i = 0; i < svc->num_provides; i++) {
+		if (!string_compare(svc->provides[i], cond))
+			continue;
+
+		if (i + 1 < svc->num_provides)
+			memmove(svc->provides[i], svc->provides[i + 1],
+				(size_t)(svc->num_provides - i - 1) * sizeof(svc->provides[0]));
+		svc->num_provides--;
+		return 1;
+	}
+
+	return 0;
+}
+
 /**
  * svc_find_by_jobid - Find a service object by its JOB:ID
  * @job: Job n:o
@@ -873,6 +894,8 @@ int svc_ifthen(int is_conf, const char *ident, char *stmt, int quiet)
 		}
 
 		svc = svc_find_by_str(stmt);
+		if (svc_is_available(svc) && svc_is_stopped(svc))
+			svc = NULL;
 		if (not && svc) {
 			if (!quiet)
 				logit(LOG_NOTICE, "skipping %s, %s already loaded.", ident, svc_ident(svc, NULL, 0));

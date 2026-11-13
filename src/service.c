@@ -1462,7 +1462,8 @@ int service_stop(svc_t *svc)
 	 * Verify there's still something there before we send the reaper.
 	 */
 	if (svc->pid > 1 && !pid_alive(svc->pid)) {
-		svc->pid = 0;
+		service_cleanup(svc);
+		svc_set_state(svc, SVC_HALTED_STATE);
 		return 0;
 	}
 
@@ -2161,6 +2162,7 @@ static void parse_cmdline_args(svc_t *svc, char *cmd, char **args)
  * @cfg:    Configuration, complete command, with -- for description text
  * @rlimit: Limits for this service/task/run, may be global limits
  * @file:   The file name service was loaded from
+ * @source: Whether the unit is enabled or only loaded from available/
  *
  * This function is used to register commands to be run on different
  * system runlevels with optional username.  The @type argument details
@@ -2216,7 +2218,8 @@ static void parse_cmdline_args(svc_t *svc, char *cmd, char **args)
  * skipped on purpose -- conditional loading, bootstrap over, nowarn --
  * also returns %NULL, with @errno zero.
  */
-svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
+svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file,
+			svc_source_t source)
 {
 	char *cmd, *desc, *runlevels = NULL, *cond = NULL;
 	char *username = NULL, *log = NULL, *pid = NULL;
@@ -2468,9 +2471,11 @@ svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 			return NULL;
 		}
 
-		if (manual)
+		if (manual || source == SVC_SOURCE_AVAILABLE_ONLY)
 			svc_stop(svc);
 	} else {
+		int was_available = svc_is_available(svc);
+
 		dbg("Found existing svc for %s name %s id %s type %d", cmd, name, id, type);
 
 		/* update type, may have changed from service -> task */
@@ -2479,10 +2484,23 @@ svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 		/* update path, may have changed on reload */
 		strlcpy(svc->cmd, cmd, sizeof(svc->cmd));
 
-		/* e.g., if missing cmd or env before */
-		if (!manual)
+		/*
+		 * Source controls enablement, manual controls start policy.
+		 * Moving into available-only must persistently block future
+		 * starts, even while a script or restart timer is active.  A
+		 * running instance is left running, like systemctl disable.
+		 */
+		if (source == SVC_SOURCE_AVAILABLE_ONLY) {
+			if (!was_available && !svc_is_running(svc))
+				svc_stop(svc);
+		} else if (!manual) {
 			svc_unblock(svc);
+		} else if (!was_available && !svc->manual && !svc_is_running(svc)) {
+			svc_stop(svc);
+		}
 	}
+
+	svc->source = source;
 
 	if (username) {
 		char *ptr = strchr(username, ':');
@@ -2699,14 +2717,10 @@ svc_t *service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 	/* Set configured limits */
 	memcpy(svc->rlimit, rlimit, sizeof(svc->rlimit));
 
-	/* Seed with currently active group, may be empty */
+	/* Seed with currently active group and settings, both may be empty */
 	strlcpy(svc->cgroup.name, cgroup_current, sizeof(svc->cgroup.name));
-
-	/* Apply cgroup settings if specified */
-	if (cgroup_settings_current[0])
-		strlcpy(svc->cgroup.cfg, cgroup_settings_current, sizeof(svc->cgroup.cfg));
-
-	/* Apply delegation flag */
+	svc->cgroup.leafname[0] = 0;
+	strlcpy(svc->cgroup.cfg, cgroup_settings_current, sizeof(svc->cgroup.cfg));
 	svc->cgroup.delegate = cgroup_delegate_current;
 
 	if (cgroup)
@@ -3148,6 +3162,9 @@ static void service_retry(svc_t *svc)
 
 	service_timeout_cancel(svc);
 
+	if (svc_is_available(svc) && svc_is_stopped(svc))
+		return;
+
 	if (is_norespawn())
 		return;
 
@@ -3309,14 +3326,34 @@ static void svc_set_state(svc_t *svc, svc_state_t new_state)
  * We get here when the service_monitor() collects the PID, sets svc->pid to 0,
  * and the state machine prepares for the worst bu setting state to HALTED.
  */
-void service_forked(svc_t *svc)
+int service_forked(svc_t *svc)
 {
 	/* Stop forking_retry() timer */
 	service_timeout_cancel(svc);
 
+	/*
+	 * A pidfile may arrive after the service has been disabled or stopped.
+	 * Keep the stop request intact and let the state machine terminate the
+	 * process now recorded by the pidfile plugin.
+	 */
+	if (svc_is_stopping(svc) || svc_is_stopped(svc)) {
+		svc_state_t *state = (svc_state_t *)&svc->state;
+
+		/*
+		 * service_stop() ignores an already stopping service.  Re-arm it
+		 * internally for the newly discovered PID, without publishing a
+		 * transient RUNNING state or clearing the stop request.
+		 */
+		*state = SVC_RUNNING_STATE;
+		service_stop(svc);
+		return 0;
+	}
+
 	/* Not crashing, restore RUNNING state */
 	svc_unblock(svc);
 	svc_set_state(svc, SVC_RUNNING_STATE);
+
+	return 1;
 }
 
 /* Set or clear service/foo/ready condition for services and call optional ready:script */
