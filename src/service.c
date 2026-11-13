@@ -2492,6 +2492,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 			svc_unblock(svc);
 	}
 
+	svc->group[0] = 0;
 	svc->supgroups[0] = 0;
 	if (username) {
 		char *ptr = strchr(username, ':');

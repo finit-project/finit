@@ -1,15 +1,18 @@
 #!/bin/sh
-# Verify extra-groups sets every listed group on the service, and that
-# dropping the setting drops the groups.
+# Verify group and extra-groups are set on the service, and that
+# dropping either setting drops the group(s) too.
 set -eu
 
 TEST_DIR=$(dirname "$0")
 
-# Optional argument is the extra-groups list
+# Optional arguments are the extra-groups list and the group
 write_conf()
 {
     run "echo 'service grp {'                     >  $FINIT_CONF"
-    run "echo '    group   = \"root\"'            >> $FINIT_CONF"
+    run "echo '    user    = \"root\"'            >> $FINIT_CONF"
+    if [ -n "${2:-}" ]; then
+	run "echo '    group   = \"$2\"'          >> $FINIT_CONF"
+    fi
     if [ -n "${1:-}" ]; then
 	run "echo '    extra-groups = { $1 }'     >> $FINIT_CONF"
     fi
@@ -25,6 +28,13 @@ assert_groups()
 	   "$(texec cat "/proc/$pid/status" | sed -n 's/^Groups:[[:space:]]*//p' | xargs)" = "$1"
 }
 
+assert_gid()
+{
+    pid=$(texec initctl -j status grp | jq .pid)
+    assert "Service gid == $1" \
+	   "$(texec cat "/proc/$pid/status" | awk '/^Gid:/ {print $2}')" = "$1"
+}
+
 test_teardown()
 {
     say "Running test teardown."
@@ -35,7 +45,7 @@ test_teardown()
 . "$TEST_DIR/lib/setup.sh"
 
 say 'Seven extra groups'
-write_conf '"daemon", "bin", "sys", "adm", "tty", "disk", "dialout"'
+write_conf '"daemon", "bin", "sys", "adm", "tty", "disk", "dialout"' root
 run "initctl reload"
 
 retry 'assert_num_children 1 serv'
@@ -48,3 +58,14 @@ run "initctl reload"
 run "initctl restart grp"
 
 retry 'assert_groups "0"'
+
+say 'Dropping group drops the group'
+write_conf "" adm
+run "initctl reload"
+run "initctl restart grp"
+retry 'assert_gid 4'
+
+write_conf
+run "initctl reload"
+run "initctl restart grp"
+retry 'assert_gid 0'

@@ -147,6 +147,9 @@ All relevant changes are documented in this file.
   `@user:group,sup1,sup2,...`.  The list may now be up to 511 characters.
   Groups dropped from a service's configuration are now also dropped the
   next time it starts, before they lingered until reboot
+- Fix a service's group lingering after it was dropped from the
+  configuration, e.g. `@alice:wheel` changed to `@alice` kept running as
+  `wheel` until reboot
 - `stop:` and `reload:` scripts take a timeout of their own, `stop:5,/path`,
   defaulting to the kill delay as before.  Such a line used to crash Finit at
   config load
