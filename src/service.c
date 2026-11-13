@@ -65,8 +65,6 @@
 #include "utmp-api.h"
 #include "schedule.h"
 
-#define NOTIFY_PATH "@run/finit/notify/%d"
-
 int logfile_size_max = 200000;	/* 200 kB */
 int logfile_count_max = 5;
 
@@ -895,6 +893,26 @@ static int pam_refused(svc_t *svc)
 	return 1;
 }
 
+/*
+ * Bind the systemd notify socket before fork since the daemon may
+ * notify right away, see issue #505.  The kernel picks a unique abstract
+ * address, which NOTIFY_SOCKET spells with a leading '@'.
+ */
+static int notify_bind(int sd, char *path, size_t len)
+{
+	struct sockaddr_un sun = { .sun_family = AF_UNIX };
+	socklen_t slen = sizeof(sun);
+
+	if (bind(sd, (struct sockaddr *)&sun, sizeof(sa_family_t)) ||
+	    getsockname(sd, (struct sockaddr *)&sun, &slen))
+		return -1;
+
+	slen -= offsetof(struct sockaddr_un, sun_path) + 1;
+	snprintf(path, len, "@%.*s", (int)slen, &sun.sun_path[1]);
+
+	return 0;
+}
+
 /**
  * service_start - Start service
  * @svc: Service to start
@@ -904,6 +922,7 @@ static int pam_refused(svc_t *svc)
  */
 static int service_start(svc_t *svc)
 {
+	char notify[sizeof(struct sockaddr_un)];
 	int result = 0, do_progress = 1;
 	char cmdline[CMD_SIZE] = "";
 	sigset_t nmask, omask;
@@ -987,6 +1006,12 @@ static int service_start(svc_t *svc)
 			svc_missing(svc);
 			return 1;
 		}
+		if (notify_bind(sd, notify, sizeof(notify))) {
+			err(1, "%s: failed binding to notify socket", svc_ident(svc, NULL, 0));
+			close(sd);
+			svc_missing(svc);
+			return 1;
+		}
 		break;
 	default:
 		break;
@@ -1025,31 +1050,16 @@ static int service_start(svc_t *svc)
 		result = -1;
 		goto fail;
 	} else if (pid > 0) {
-		struct sockaddr_un sun;
-		size_t len;
-
 		dbg("Starting %s as PID %d", svc_ident(svc, NULL, 0), pid);
 		svc->pid = pid;
 		svc->start_time = jiffies();
 
+		if (fd != -1)
+			close(fd); /* client-end of pipefd for s6 notify */
+
 		switch (svc->notify) {
 		case SVC_NOTIFY_SYSTEMD:
-			memset(&sun, 0, sizeof(sun));
-			sun.sun_family = AF_UNIX;
-			snprintf(sun.sun_path, sizeof(sun.sun_path), NOTIFY_PATH, pid);
-			len = strlen(sun.sun_path);
-			sun.sun_path[0] = 0;
-			result = bind(sd, (struct sockaddr *)&sun, offsetof(struct sockaddr_un, sun_path) + len);
-			if (result == -1) {
-				err(1, "%s: failed binding to notify socket", svc_ident(svc, NULL, 0));
-				close(sd);
-				break;
-			}
-			/* fallthrough */
 		case SVC_NOTIFY_S6:
-			if (svc->notify == SVC_NOTIFY_S6)
-				close(fd); /* client-end of pipefd for s6 notify */
-
 			result = uev_io_init(ctx, &svc->notify_watcher, service_notify_cb, svc, sd, UEV_READ);
 			if (result < 0) {
 				err(1, "%s: failed setting up notify callback", svc_ident(svc, NULL, 0));
@@ -1060,7 +1070,6 @@ static int service_start(svc_t *svc)
 			break;
 		}
 	} else { /* pid == 0 */
-		char str[strlen(NOTIFY_PATH) + 32];
 		char *args[MAX_NUM_SVC_ARGS + 3];
 		int status;
 
@@ -1069,8 +1078,7 @@ static int service_start(svc_t *svc)
 
 		switch (svc->notify) {
 		case SVC_NOTIFY_SYSTEMD:
-			snprintf(str, sizeof(str), NOTIFY_PATH, getpid());
-			setenv("NOTIFY_SOCKET", str, 1);
+			setenv("NOTIFY_SOCKET", notify, 1);
 			/* fallthrough */
 		case SVC_NOTIFY_S6:
 			close(sd);

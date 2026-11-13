@@ -166,6 +166,9 @@ All relevant changes are documented in this file.
 - Fix #503: keventd did not touch its PID file after SIGHUP, so with a
   daemon-owned PID file Finit never saw it reassert readiness after a
   reload.  Reported by Aaron Andersen
+- Fix #505: a `notify:systemd` service could send `READY=1` before Finit
+  had bound the notify socket, losing it, so the service never became
+  ready.  Seen with udevd in an initramfs.  Reported by Aaron Andersen
 - Fix a command whose name starts like a service option, e.g. `logger` or
   `pidof`.  It was taken as the `log` or `pid` option and the next argument
   ran as the command, which also broke the `logger` example in finit.conf(5)
