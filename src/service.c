@@ -625,20 +625,22 @@ static pid_t service_fork(svc_t *svc)
 		{
 			gid_t supgids[NGROUPS_MAX];
 			int ngroups = NGROUPS_MAX;
-			int i, j, n = 0;
+			char *sup, *ptr;
+			int j, n = 0;
 
 			/* Get user's supplementary groups from /etc/group */
 			if (getgrouplist(svc->username, gid, supgids, &ngroups) >= 0)
 				n = ngroups;
 
 			/* Add explicitly configured supplementary groups */
-			for (i = 0; i < svc->num_supgroups && n < NGROUPS_MAX; i++) {
-				int g = getgroup(svc->supgroups[i]);
+			for (sup = strtok_r(strdupa(svc->supgroups), ",", &ptr);
+			     sup && n < NGROUPS_MAX; sup = strtok_r(NULL, ",", &ptr)) {
+				int g = getgroup(sup);
 				int found = 0;
 
 				if (g < 0) {
-					warn("%s: unknown supplementary group '%s'",
-					     svc_ident(svc, NULL, 0), svc->supgroups[i]);
+					warnx("%s: unknown supplementary group '%s'",
+					     svc_ident(svc, NULL, 0), sup);
 					continue;
 				}
 				/* Skip if already in list from /etc/group */
@@ -2140,10 +2142,12 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 			svc_unblock(svc);
 	}
 
+	svc->supgroups[0] = 0;
 	if (username) {
 		char *ptr = strchr(username, ':');
 
 		if (ptr) {
+			size_t len = sizeof(svc->supgroups);
 			char *sup;
 
 			*ptr++ = 0;
@@ -2151,20 +2155,15 @@ int service_register(int type, char *cfg, struct rlimit rlimit[], char *file)
 			sup = strchr(ptr, ',');
 			if (sup) {
 				*sup++ = 0;
-				svc->num_supgroups = 0;
-				while (sup) {
-					char *next = strchr(sup, ',');
-					if (next)
-						*next++ = 0;
-					if (svc->num_supgroups >= MAX_NUM_SUPGROUPS) {
-						warn("%s: too many supplementary groups, max %d",
-						     svc->cmd, MAX_NUM_SUPGROUPS);
-						break;
-					}
-					strlcpy(svc->supgroups[svc->num_supgroups], sup,
-						sizeof(svc->supgroups[0]));
-					svc->num_supgroups++;
-					sup = next;
+				if (strlcpy(svc->supgroups, sup, len) >= len) {
+					/* Drop the cut-off name, it may match another group */
+					sup = strrchr(svc->supgroups, ',');
+					if (sup)
+						*sup = 0;
+					else
+						svc->supgroups[0] = 0;
+					warnx("%s: supplementary group list too long, max %zu characters",
+					      svc->cmd, len - 1);
 				}
 			}
 			strlcpy(svc->group, ptr, sizeof(svc->group));

@@ -34,6 +34,11 @@ All relevant changes are documented in this file.
   or `pidof`.  It was taken as the `log` or `pid` option and the next
   argument ran as the command, which also broke the `logger` example in
   finit.conf(5)
+- A service can have more than four supplementary groups, as in
+  `@user:group,sup1,sup2,...`.  The list may now be up to 511
+  characters.  Groups dropped from a service's configuration are now
+  also dropped the next time it starts, before they lingered until
+  reboot
 - Remove stale daemon-owned (`pid:!`) pidfiles after unclean exits.
   When a daemon dies via SIGKILL/OOM/segfault, or exits early during
   startup, its pidfile lingers and can prevent the next instance from
