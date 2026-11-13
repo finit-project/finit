@@ -30,6 +30,10 @@ All relevant changes are documented in this file.
 - Fix `initctl stop` of a forking service before it had written its
   PID file.  The PID file showing up later undid the stop and the
   service was reported running.  Now the late daemon is stopped instead
+- Fix a command whose name starts like a service option, e.g. `logger`
+  or `pidof`.  It was taken as the `log` or `pid` option and the next
+  argument ran as the command, which also broke the `logger` example in
+  finit.conf(5)
 - Remove stale daemon-owned (`pid:!`) pidfiles after unclean exits.
   When a daemon dies via SIGKILL/OOM/segfault, or exits early during
   startup, its pidfile lingers and can prevent the next instance from
