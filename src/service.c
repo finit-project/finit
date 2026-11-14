@@ -2486,7 +2486,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 		strlcpy(svc->cmd, cmd, sizeof(svc->cmd));
 
 		/* e.g., if missing cmd or env before */
-		if (!manual)
+		if (!manual && svc->block != SVC_BLOCK_USER)
 			svc_unblock(svc);
 	}
 
