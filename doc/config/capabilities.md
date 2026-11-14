@@ -169,8 +169,9 @@ ps -o user,pid,cmd -p $(pidof nginx)
 
 - Linux kernel 4.3+ (for ambient capabilities support)
 - libcap library installed
-- Finit built with `--enable-libcap`, otherwise a `capabilities` list is
-  ignored, with a warning
+- Finit built with libcap support (enabled by default unless `--disable-libcap`
+  is given or libcap was missing at build time), otherwise a `capabilities` list
+  is ignored, with a warning
 
 ## Limitations
 

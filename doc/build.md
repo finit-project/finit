@@ -15,6 +15,10 @@ and `/dev/disk/by-label/` symlinks after.  keventd is enabled by
 default, so this is a hard requirement unless you build with
 `--without-keventd`.
 
+Linux capabilities support for services is also built by default.  It needs
+[libcap][] (-lcap); the build falls back to no capabilities support when that
+library is missing, or with `--disable-libcap`.
+
 PAM session support for services is built by default.  It needs
 [Linux-PAM][] (-lpam); the build falls back to no PAM support when that
 library is missing.  A static build, `--enable-static`, disables PAM
@@ -37,6 +41,7 @@ version of the above mentioned libraries.  Currently required versions:
 - libuEv v2.2.0, or later
 - libConfuse v3.3, or later
 - libblkid, any version, when keventd is enabled
+- libcap, any version, unless `--disable-libcap` is given
 
 
 Configure
@@ -58,6 +63,10 @@ Below are a few of the main switches to configure:
 * `--enable-static`: Build Finit statically.  The plugins will be
   built-ins (.o files) and all external libraries, except the C library
   will be linked statically.
+
+* `--disable-libcap`: Opt out of Finit's built-in Linux capabilities support,
+  enabled by default.  Needs libcap, and falls back to disabled when it is
+  missing.  See [Linux Capabilities](config/capabilities.md)
 
 * `--disable-pam`: Opt out of Finit's built-in PAM session support,
   enabled by default, which lets a service declare `pam = "name"` and
@@ -298,4 +307,5 @@ it only for debugging start up issues when Finit crashes.
 [libite]:  https://github.com/troglobit/libite
 [libConfuse]: https://github.com/libconfuse/libconfuse
 [util-linux]: https://github.com/util-linux/util-linux
+[libcap]:     https://sites.google.com/site/fullycapable/
 [Linux-PAM]:  https://github.com/linux-pam/linux-pam
