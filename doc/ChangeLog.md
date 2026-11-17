@@ -23,6 +23,10 @@ All relevant changes are documented in this file.
 
 ### Fixes
 
+- Fix #452: a stopped or waiting service with a daemon-owned PID file
+  was reported as running, with its conditions set, when another
+  process wrote that PID file, e.g., a container started by hand with
+  podman.  Found by Mattias Walström
 - Remove stale daemon-owned (`pid:!`) pidfiles after unclean exits.
   When a daemon dies via SIGKILL/OOM/segfault, or exits early during
   startup, its pidfile lingers and can prevent the next instance from

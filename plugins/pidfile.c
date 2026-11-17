@@ -109,6 +109,12 @@ static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
 	}
 
 	if (mask & (IN_CLOSE_WRITE | IN_ATTRIB | IN_MODIFY | IN_MOVED_TO)) {
+		/* Only a starting or running service may claim a PID file, issue #452 */
+		if (!svc_is_starting(svc) && !svc_is_running(svc)) {
+			dbg("%s is %s, ignoring %s", nm, svc_status(svc), fn);
+			return;
+		}
+
 		/*
 		 * only mark native services as started, the s6 and
 		 * systemd style services rely on their respective
