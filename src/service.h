@@ -58,7 +58,7 @@ int       service_timeout_after  (svc_t *svc, int timeout, void (*cb)(svc_t *svc
 int       service_timeout_cancel (svc_t *svc);
 void      compose_cmdline        (svc_t *svc, char *buf, size_t len);
 
-void      service_forked         (svc_t *svc);
+int       service_forked         (svc_t *svc);
 void      service_ready          (svc_t *svc, int ready);
 
 int       service_stop           (svc_t *svc);

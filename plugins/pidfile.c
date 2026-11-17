@@ -139,9 +139,6 @@ static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
 				return;
 			}
 
-			/* Service is not crashing, let's tell state machine! */
-			service_forked(svc);
-
 			if (pid != svc->pid) {
 				dbg("Forking service %s (cmd %s) changed PID from %d to %d",
 				   svc_ident(svc, NULL, 0), svc->cmd, svc->pid, pid);
@@ -151,6 +148,10 @@ static void pidfile_update_conds(char *dir, char *name, uint32_t mask)
 				logit(LOG_CONSOLE | LOG_NOTICE, "Started %s[%d]", svc_ident(svc, NULL, 0), pid);
 				cgroup_move_svc(svc);
 			}
+
+			/* Service is not crashing, let's tell state machine! */
+			if (!service_forked(svc))
+				return;
 		}
 
 		if (svc->notify == SVC_NOTIFY_PID)

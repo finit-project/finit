@@ -21,7 +21,7 @@ external()
 cleanup()
 {
     run "kill \$(cat $PIDFN 2>/dev/null) 2>/dev/null || true"
-    run "rm -f $PIDFN"
+    run "rm -f $PIDFN /bin/late.sh /tmp/late"
 }
 
 test_teardown()
@@ -58,3 +58,27 @@ retry 'assert_status ext waiting'
 external
 assert_status ext waiting
 assert_nocond pid/ext
+cleanup
+
+# A forking daemon whose launcher exits before the daemon has written
+# its PID file.  A stop in that window must hold, and the daemon that
+# shows up late must be stopped, not adopted as running.
+sep
+say 'A forking service stopped before its PID file appears stays stopped'
+# Unquoted END, $PIDFN expands here.  /tmp/late marks the daemon start
+cat > "$SYSROOT/bin/late.sh" <<END
+#!/bin/sh
+( sleep 1; touch /tmp/late; exec serv -n -p -P $PIDFN ) &
+END
+chmod +x "$SYSROOT/bin/late.sh"
+run "echo 'service name:ext pid:!$PIDFN late.sh -- Late' > $FINIT_CONF"
+run "initctl reload"
+run "initctl stop ext"
+
+retry 'assert_file_exists /tmp/late'
+
+# Negative check, give the pidfile plugin time to (not) react
+sleep 1
+assert_status ext stopped
+assert_nocond pid/ext
+assert_num_children 0 serv
