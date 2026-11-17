@@ -259,6 +259,27 @@ down gracefully.  If it has not been collected within 3 seconds,
 
   * `stop-signal = "SIGPWR"` -- send this instead of `SIGTERM`
   * `stop-timeout = 10` -- seconds to wait before `SIGKILL`, 1-300
+  * `stop-scope = "process"` -- which processes are stopped, see below
+
+The stop signal goes to the main process of the service.  When that
+exits, Finit sends `SIGKILL` to any processes it left behind in its
+process group.  This is the default, `stop-scope = "pgroup"`.  Other
+scopes:
+
+  * `process` -- only the main process, anything it leaves behind is
+    left alone, e.g. a script it started on its way down
+  * `cgroup` -- the stop signal goes to all processes in the cgroup of
+    the service, and `SIGKILL` to those still there when the main
+    process exits
+  * `mixed` -- the stop signal goes to the main process, and `SIGKILL`
+    to the rest of the cgroup when it exits
+
+All services declared in the same .conf file share a cgroup, unless
+given a [name of their own](cgroups.md#overriding-cgroup-leaf-names),
+so `cgroup` and `mixed` reach them all, Finit warns about this.  Without
+cgroups, these two fall back to the process group.  A forking daemon
+usually leaves the process group of its start command, so only `cgroup`
+and `mixed` reach what it leaves behind.
 
 Some services need more than a signal:
 

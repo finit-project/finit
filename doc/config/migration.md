@@ -69,6 +69,7 @@ Service options
 | `oncrash:reboot`                 | `oncrash = "reboot"`                             |
 | `halt:SIG`                       | `stop-signal = "SIG"`                            |
 | `kill:SEC`                       | `stop-timeout = SEC`                             |
+| `stop-scope:SCOPE`               | `stop-scope = "SCOPE"`                           |
 | `pre:[TMO,]/script`              | `exec-start-pre`, `exec-start-pre-timeout`       |
 | `ready:[TMO,]/script`            | `exec-start-ready`, and its `-timeout`           |
 | `stop:[TMO,]/script`             | `exec-stop`, and its `-timeout`                  |

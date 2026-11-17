@@ -58,6 +58,8 @@ int   cgroup_watch   (const char *group, const char *name);
 
 int   cgroup_move_pid(const char *group, const char *name, int pid, int delegate);
 int   cgroup_move_svc(svc_t *svc);
+int   cgroup_svc_has (svc_t *svc);
+int   cgroup_signal_svc(svc_t *svc, int sig);
 
 void  cgroup_prune   (void);
 

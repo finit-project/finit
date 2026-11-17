@@ -8,6 +8,9 @@ All relevant changes are documented in this file.
 
 ### Changes
 
+- Add `stop-scope`, which processes a stop applies to: `pgroup`, the process
+  group of the main process (default), `process`, only the main process,
+  `cgroup`, the cgroup of the service, or `mixed` like systemd.  Issue #413
 - keventd is now a full device manager, promoted from the power supply
   monitor it was in v4, and the device management defaults have swapped:
   keventd is enabled by default (`--without-keventd` opts out, libblkid is

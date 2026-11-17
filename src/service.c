@@ -1252,6 +1252,15 @@ fail:
 	return result;
 }
 
+/* The cgroup of the service, or the process group of its main PID */
+static int service_signal_all(svc_t *svc, int sig)
+{
+	if (svc_is_cgroup_scope(svc) && !cgroup_signal_svc(svc, sig))
+		return 0;
+
+	return kill(-svc->pid, sig);
+}
+
 /**
  * service_kill - Forcefully terminate a service
  * @param svc  Service to kill
@@ -1495,8 +1504,11 @@ int service_stop(svc_t *svc)
 			 * entire group.  This gives the process time to properly stop
 			 * and/or forward TERM to its children.  If it does not respond
 			 * in within a reasonable timeout we SIGKILL the entire group.
+			 * With stop-scope cgroup, all of the cgroup gets SIGTERM,
+			 * if the service has one.
 			 */
-			rc = kill(svc->pid, svc->sighalt);
+			if (svc->stop_scope != SVC_SCOPE_CGROUP || cgroup_signal_svc(svc, svc->sighalt))
+				rc = kill(svc->pid, svc->sighalt);
 			dbg("kill(%d, %d) => rc %d, errno %d", svc->pid, svc->sighalt, rc, errno);
 			/* PID lost or forking process never really started */
 			if (rc == -1 && (errno == ESRCH || errno == ENOENT))
@@ -2001,6 +2013,58 @@ static void parse_sighalt(svc_t *svc, char *arg)
 	svc->sighalt = signo;
 }
 
+static const char *scopes[] = {
+	[SVC_SCOPE_PGROUP]  = "pgroup",
+	[SVC_SCOPE_PROCESS] = "process",
+	[SVC_SCOPE_CGROUP]  = "cgroup",
+	[SVC_SCOPE_MIXED]   = "mixed",
+};
+
+static svc_scope_t parse_scope(svc_t *svc, const char *arg)
+{
+	size_t i;
+
+	if (!arg)
+		return SVC_SCOPE_PGROUP;
+
+	for (i = 0; i < NELEMS(scopes); i++) {
+		if (!strcmp(arg, scopes[i]))
+			return (svc_scope_t)i;
+	}
+
+	warnx("%s: unknown stop-scope '%s', using pgroup", svc_ident(svc, NULL, 0), arg);
+	return SVC_SCOPE_PGROUP;
+}
+
+/*
+ * A cgroup scope also reaches other services sharing the cgroup.
+ * Only checked for a new or changed service, not on every reload.
+ */
+static void scope_check(svc_t *svc)
+{
+	char a[MAX_ARG_LEN], b[MAX_ARG_LEN];
+	svc_t *s, *iter = NULL;
+
+	if (!svc_is_changed(svc) || !cgroup_svc_has(svc))
+		return;
+
+	cgroup_svc_name(svc, a, sizeof(a));
+	for (s = svc_iterator(&iter, 1); s; s = svc_iterator(&iter, 0)) {
+		svc_t *scoped = svc_is_cgroup_scope(svc) ? svc : s;
+
+		if (s == svc || !svc_is_cgroup_scope(scoped))
+			continue;
+		if (svc_is_tty(s) != svc_is_tty(svc) || strcmp(s->cgroup.name, svc->cgroup.name) ||
+		    strcmp(cgroup_svc_name(s, b, sizeof(b)), a))
+			continue;
+
+		logit(LOG_WARNING, "%s: stop-scope %s also reaches %s, give it a cgroup name of its own",
+		      svc_ident(scoped, a, sizeof(a)), scopes[scoped->stop_scope],
+		      svc_ident(scoped == svc ? s : svc, b, sizeof(b)));
+		return;
+	}
+}
+
 static void parse_killdelay(svc_t *svc, char *delay)
 {
 	const char *errstr;
@@ -2250,7 +2314,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 {
 	char *cmd, *runlevels = NULL, *cond = NULL;
 	char *username = NULL, *log = NULL, *pid = NULL;
-	char *name = NULL, *halt = NULL, *delay = NULL;
+	char *name = NULL, *halt = NULL, *delay = NULL, *scope = NULL;
 	char *id = NULL, *env = NULL, *cgroup = NULL;
 	char *pre_script = NULL, *post_script = NULL;
 	char *ready_script = NULL, *conflict = NULL;
@@ -2351,6 +2415,8 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 			halt = arg;
 		else if (MATCH_CMD(cmd, "kill:", arg))
 			delay = arg;
+		else if (MATCH_CMD(cmd, "stop-scope:", arg))
+			scope = arg;
 		else if (MATCH_CMD(cmd, "pre:", arg))
 			pre_script = arg;
 		else if (MATCH_CMD(cmd, "post:", arg))
@@ -2571,6 +2637,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 		parse_killdelay(svc, delay);
 	else
 		svc->killdelay = SVC_TERM_TIMEOUT;
+	svc->stop_scope = parse_scope(svc, scope);
 	if (pre_script)
 		parse_script(svc, "pre", pre_script, &svc->pre_tmo, svc->pre_script, sizeof(svc->pre_script));
 	else
@@ -2736,6 +2803,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 		svc_mark_dirty(svc);
 
 	svc_enable(svc);
+	scope_check(svc);
 
 	/* for finit native services only, e.g. plugins/hotplug.c */
 	if (!file)
@@ -2878,9 +2946,11 @@ void service_monitor(pid_t lost, int status)
 		logit(LOG_CONSOLE | LOG_NOTICE, "Stopped %s[%d]", svc_ident(svc, NULL, 0), lost);
 	}
 
-	/* Terminate any children in the same proess group, e.g. logit */
-	dbg("Killing lingering children in same process group ...");
-	kill(-svc->pid, SIGKILL);
+	/* Terminate lingering children, e.g. logit, unless stop-scope says not to */
+	if (svc->stop_scope != SVC_SCOPE_PROCESS) {
+		dbg("Killing lingering children ...");
+		service_signal_all(svc, SIGKILL);
+	}
 
 	/* Try removing PID file (in case service does not clean up after itself) */
 	if (svc_is_daemon(svc) || svc_is_tty(svc)) {

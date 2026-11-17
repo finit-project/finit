@@ -112,6 +112,14 @@ typedef enum {
 /* Prevent endless respawn of faulty services. */
 #define SVC_RESPAWN_MAX  10
 
+/* stop-scope, issue #413 */
+typedef enum {
+	SVC_SCOPE_PGROUP = 0,	/* Signal main PID, SIGKILL its process group */
+	SVC_SCOPE_PROCESS,	/* Main PID only */
+	SVC_SCOPE_CGROUP,	/* Signal all in cgroup, SIGKILL the rest */
+	SVC_SCOPE_MIXED,	/* Signal main PID, SIGKILL rest of cgroup */
+} svc_scope_t;
+
 /*
  * Default enable for all services, can be stopped by means
  * of issuing an initctl call. E.g.
@@ -131,6 +139,7 @@ typedef struct svc {
 	/* Service details */
 	int            sighalt;        /* Signal to stop process, default: SIGTERM */
 	int            killdelay;      /* Delay in msec before sending SIGKILL */
+	svc_scope_t    stop_scope;     /* Which processes stop applies to */
 	pid_t          oldpid, pid;
 	char           pidfile[MAX_CMD_LEN];
 	long           start_time;     /* Start time, as seconds since boot, from sysinfo() */
@@ -324,6 +333,7 @@ static inline void svc_starting    (svc_t *svc) { if (svc) svc->starting = 1;   
 static inline void svc_started     (svc_t *svc) { if (svc) svc->starting = 0;       }
 static inline int  svc_is_starting (svc_t *svc) { return svc && 0 != svc->starting; }
 static inline int  svc_is_running  (svc_t *svc) { return svc && svc->state == SVC_RUNNING_STATE; }
+static inline int  svc_is_cgroup_scope(svc_t *svc) { return svc->stop_scope == SVC_SCOPE_CGROUP || svc->stop_scope == SVC_SCOPE_MIXED; }
 static inline int  svc_is_stopping (svc_t *svc) { return svc && svc->state == SVC_STOPPING_STATE; }
 static inline int  svc_is_stopped  (svc_t *svc) { return svc && svc->block == SVC_BLOCK_USER; }
 

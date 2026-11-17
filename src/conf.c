@@ -268,6 +268,7 @@ static cfg_opt_t svc_opts[] = {
 	CFG_STR     ("halt",         NULL, CFGF_NODEFAULT),	/* alias */
 	CFG_INT     ("stop-timeout", 0,    CFGF_NODEFAULT),
 	CFG_INT     ("kill",         0,    CFGF_NODEFAULT),	/* alias */
+	CFG_STR     ("stop-scope",   NULL, CFGF_NODEFAULT),
 
 	/* lifecycle scripts, each with its own bound */
 	EXEC_OPTS("exec-start-pre"),
@@ -1674,6 +1675,8 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
 		addtok(line, sizeof(line), "halt:%s", str);
 	if (sec_getint(sec, "stop-timeout", "kill", &num))
 		addtok(line, sizeof(line), "kill:%ld", num);
+	if ((str = sec_getstr(sec, "stop-scope", NULL)))
+		addtok(line, sizeof(line), "stop-scope:%s", str);
 
 	addscript(line, sizeof(line), sec, "exec-start-pre",   "pre:");
 	addscript(line, sizeof(line), sec, "exec-start-ready", "ready:");

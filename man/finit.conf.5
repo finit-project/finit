@@ -470,6 +470,18 @@ modifier
 e.g.,
 .Cm kill:10
 to wait 10 seconds before sending SIGKILL.
+When the process exits, Finit sends SIGKILL to any processes left in
+its process group.  The command modifier
+.Cm stop-scope:SCOPE
+changes this:
+.Cm process
+leaves them alone,
+.Cm cgroup
+sends the halt signal to all processes in the cgroup of the service and
+SIGKILL to the rest when the process exits, and
+.Cm mixed
+sends only SIGKILL to the rest of the cgroup.  The default is
+.Cm pgroup .
 .Pp
 Services, including the
 .Cm sysv

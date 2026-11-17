@@ -222,6 +222,86 @@ int cgroup_move_svc(svc_t *svc)
 			       svc->pid, svc->cgroup.delegate);
 }
 
+/*
+ * The cgroup @svc runs in, as set up by cgroup_prepare().  NULL for
+ * the root cgroup, which is not the service's own.
+ */
+static char *cgroup_svc_path(svc_t *svc, const char *name, char *buf, size_t len)
+{
+	const char *group;
+
+	if (svc_is_tty(svc))
+		group = "user";
+	else if (!strcmp(svc->cgroup.name, "root"))
+		return NULL;
+	else
+		group = svc->cgroup.name[0] ? svc->cgroup.name : "system";
+
+	snprintf(buf, len, FINIT_CGPATH "/%s/%s", group, name);
+	return buf;
+}
+
+static void cgroup_signal_path(const char *path, int sig)
+{
+	char fn[PATH_MAX];
+	struct dirent *d;
+	DIR *dir;
+	FILE *fp;
+	int pid;
+
+	fp = fopenf("r", "%s/cgroup.procs", path);
+	if (fp) {
+		/* A PID outside our PID namespace reads as 0, our own group */
+		while (fscanf(fp, "%d", &pid) == 1) {
+			if (pid > 1)
+				kill(pid, sig);
+		}
+		fclose(fp);
+	}
+
+	/* Delegated cgroups have their processes in sub-cgroups */
+	dir = opendir(path);
+	if (!dir)
+		return;
+	while ((d = readdir(dir))) {
+		if (d->d_type != DT_DIR || !strcmp(d->d_name, ".") || !strcmp(d->d_name, ".."))
+			continue;
+		snprintf(fn, sizeof(fn), "%s/%s", path, d->d_name);
+		cgroup_signal_path(fn, sig);
+	}
+	closedir(dir);
+}
+
+/* True if @svc runs in a cgroup of its own, not the root cgroup */
+int cgroup_svc_has(svc_t *svc)
+{
+	return avail && svc && strcmp(svc->cgroup.name, "root");
+}
+
+/*
+ * Send @sig to every process in the cgroup of @svc.  Returns -1 if
+ * it has no cgroup of its own, e.g. cgroups are not available.
+ */
+int cgroup_signal_svc(svc_t *svc, int sig)
+{
+	char name[MAX_ARG_LEN];
+	char path[PATH_MAX];
+
+	if (!cgroup_svc_has(svc))
+		return -1;
+
+	if (!cgroup_svc_path(svc, cgroup_svc_name(svc, name, sizeof(name)), path, sizeof(path)) ||
+	    !fisdir(path))
+		return -1;
+
+	/* Atomic and recursive, Linux 5.14 and later */
+	if (sig == SIGKILL && !fnwrite("1", "%s/cgroup.kill", path))
+		return 0;
+
+	cgroup_signal_path(path, sig);
+	return 0;
+}
+
 static void cgset(const char *path, char *ctrl, char *prop)
 {
 	char *val;
@@ -798,23 +878,15 @@ int cgroup_del(char *dir)
  */
 int cgroup_del_svc(svc_t *svc, const char *name)
 {
-	const char *group;
-	char path[256];
+	char path[PATH_MAX];
 
 	if (!avail)
 		return 0;
 
-	/* Determine group from service */
-	if (svc_is_tty(svc)) {
-		group = "user";
-	} else if (svc->cgroup.name[0] && !strcmp(svc->cgroup.name, "root")) {
-		/* Root cgroup - nothing to delete */
+	/* Root cgroup - nothing to delete */
+	if (!cgroup_svc_path(svc, name, path, sizeof(path)))
 		return 0;
-	} else {
-		group = svc->cgroup.name[0] ? svc->cgroup.name : "system";
-	}
 
-	snprintf(path, sizeof(path), "/sys/fs/cgroup/%s/%s", group, name);
 	return cgroup_del(path);
 }
 
