@@ -244,7 +244,7 @@ static int do_reboot(int cmd, int timeout, char *buf, size_t len)
 	case INIT_CMD_REBOOT:
 	case INIT_CMD_HALT:
 	case INIT_CMD_POWEROFF:
-		shutdown_now(cmd, timeout);
+		rc = shutdown_now(cmd, timeout);
 		break;
 
 	case INIT_CMD_SUSPEND:
