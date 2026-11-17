@@ -27,6 +27,9 @@ All relevant changes are documented in this file.
   was reported as running, with its conditions set, when another
   process wrote that PID file, e.g., a container started by hand with
   podman.  Found by Mattias Walström
+- Fix `initctl stop` of a forking service before it had written its
+  PID file.  The PID file showing up later undid the stop and the
+  service was reported running.  Now the late daemon is stopped instead
 - Remove stale daemon-owned (`pid:!`) pidfiles after unclean exits.
   When a daemon dies via SIGKILL/OOM/segfault, or exits early during
   startup, its pidfile lingers and can prevent the next instance from

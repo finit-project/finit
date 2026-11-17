@@ -2918,16 +2918,26 @@ static void svc_set_state(svc_t *svc, svc_state_t new_state)
 /*
  * Called by pidfile plugin for forking services that have successfully started.
  * We get here when the service_monitor() collects the PID, sets svc->pid to 0,
- * and the state machine prepares for the worst bu setting state to HALTED.
+ * and the state machine prepares for the worst by setting state to HALTED.
+ *
+ * Returns 1 if the service is now running, 0 if it was stopped or disabled
+ * while waiting for its PID file, then the late daemon is stopped.
  */
-void service_forked(svc_t *svc)
+int service_forked(svc_t *svc)
 {
 	/* Stop forking_retry() timer */
 	service_timeout_cancel(svc);
 
-	/* Not crashing, restore RUNNING state */
-	svc_unblock(svc);
+	/* Not crashing, restore RUNNING state, but keep a user stop */
+	if (!svc_is_stopped(svc))
+		svc_unblock(svc);
 	svc_set_state(svc, SVC_RUNNING_STATE);
+
+	/* Follow-up to issue #452, RUNNING and not enabled -> service_stop() */
+	if (!svc_enabled(svc))
+		service_step(svc);
+
+	return svc_is_running(svc);
 }
 
 /* Set or clear service/foo/ready condition for services and call optional ready:script */
