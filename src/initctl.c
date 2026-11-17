@@ -1090,6 +1090,36 @@ static int do_reboot_dbus(const char *method)
 }
 #endif
 
+/* Scheduled shutdown, see issue #149, @cmd is INIT_CMD_REBOOT, _HALT or _POWEROFF */
+int do_shutdown_at(int cmd, int sec, const char *msg)
+{
+	struct init_request rq = {
+		.magic     = INIT_MAGIC,
+		.cmd       = INIT_CMD_SHUTDOWN,
+		.runlevel  = cmd,
+		.sleeptime = sec,
+	};
+
+	strlcpy(rq.data, msg ? msg : "", sizeof(rq.data));
+	return client_send(&rq, sizeof(rq));
+}
+
+int do_shutdown_cancel(void)
+{
+	struct init_request rq = {
+		.magic = INIT_MAGIC,
+		.cmd   = INIT_CMD_SHUTDOWN_CANCEL,
+	};
+
+	if (client_send(&rq, sizeof(rq))) {
+		if (rq.cmd == INIT_CMD_NACK)
+			warnx("%s", rq.data);
+		return 1;
+	}
+
+	return 0;
+}
+
 int do_reboot  (char *arg)
 {
 #ifdef HAVE_DBUS

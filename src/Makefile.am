@@ -54,6 +54,7 @@ finit_SOURCES      = api.c	cgroup.c	cgroup.h	\
 		     legacy.c	legacy.h			\
 		     devmon.c   devmon.h			\
 		     exec.c	finit.c		finit.h		\
+		     shutdown.c	shutdown.h			\
 		     		stty.c				\
 		     helpers.c	helpers.h			\
 		     initramfs.c				\

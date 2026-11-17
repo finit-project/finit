@@ -48,6 +48,7 @@
 #include "schedule.h"
 #include "service.h"
 #include "sm.h"
+#include "shutdown.h"
 #include "sig.h"
 #include "util.h"
 
@@ -241,43 +242,9 @@ static int do_reboot(int cmd, int timeout, char *buf, size_t len)
 
 	switch (cmd) {
 	case INIT_CMD_REBOOT:
-		halt = SHUT_REBOOT;
-		break;
-
 	case INIT_CMD_HALT:
-		halt = SHUT_HALT;
-		break;
-
 	case INIT_CMD_POWEROFF:
-		halt = SHUT_OFF;
-		break;
-
-	case INIT_CMD_SUSPEND:
-		break;
-
-	default:
-		return 255;
-	}
-
-	shutdown_bypass(timeout);
-
-	switch (cmd) {
-	case INIT_CMD_REBOOT:
-		dbg("reboot");
-		halt = SHUT_REBOOT;
-		sm_runlevel(6);
-		break;
-
-	case INIT_CMD_HALT:
-		dbg("halt");
-		halt = SHUT_HALT;
-		sm_runlevel(0);
-		break;
-
-	case INIT_CMD_POWEROFF:
-		dbg("poweroff");
-		halt = SHUT_OFF;
-		sm_runlevel(0);
+		shutdown_now(cmd, timeout);
 		break;
 
 	case INIT_CMD_SUSPEND:
@@ -293,8 +260,7 @@ static int do_reboot(int cmd, int timeout, char *buf, size_t len)
 		break;
 
 	default:
-		/* Handled previously */
-		break;
+		return 255;
 	}
 
 	return rc;
@@ -384,6 +350,7 @@ static void api_cb(uev_t *w, void *arg, int events)
 		case INIT_CMD_HALT:
 		case INIT_CMD_POWEROFF:
 		case INIT_CMD_SUSPEND:
+		case INIT_CMD_SHUTDOWN:
 			if (IS_RESERVED_RUNLEVEL(runlevel)) {
 				strterm(rq.data, sizeof(rq.data));
 				warnx("Unsupported command (cmd: %d, data: %s) in runlevel S and 6/0.",
@@ -482,6 +449,17 @@ static void api_cb(uev_t *w, void *arg, int events)
 		case INIT_CMD_POWEROFF:
 		case INIT_CMD_SUSPEND:
 			result = do_reboot(rq.cmd, rq.sleeptime, rq.data, sizeof(rq.data));
+			break;
+
+		case INIT_CMD_SHUTDOWN:
+			strterm(rq.data, sizeof(rq.data));
+			result = shutdown_schedule(rq.runlevel, rq.sleeptime, rq.data);
+			break;
+
+		case INIT_CMD_SHUTDOWN_CANCEL:
+			result = shutdown_cancel();
+			if (result)
+				strlcpy(rq.data, "No scheduled shutdown to cancel.", sizeof(rq.data));
 			break;
 
 		case INIT_CMD_SWITCH_ROOT:

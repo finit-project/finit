@@ -50,6 +50,7 @@
 #include "schedule.h"
 #include "service.h"
 #include "sig.h"
+#include "shutdown.h"
 #include "sm.h"
 #include "svc.h"
 #include "util.h"
@@ -438,7 +439,7 @@ static int manager_set_runlevel(link_call_t *call, void *userdata)
 	return 0;
 }
 
-static int dbus_shutdown(link_call_t *call, shutop_t target, int level)
+static int dbus_shutdown(link_call_t *call, int cmd)
 {
 	uint32_t timeout;
 
@@ -450,16 +451,14 @@ static int dbus_shutdown(link_call_t *call, shutop_t target, int level)
 		return link_call_reply_error(call,
 			"org.finit.Error.WrongRunlevel",
 			"Already in shutdown");
-	halt = target;
-	shutdown_bypass((int)timeout);
-	sm_runlevel(level);
+	shutdown_now(cmd, (int)timeout);
 	(void)link_call_reply(call);
 	return 0;
 }
 
-static int manager_reboot  (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_REBOOT, 6); }
-static int manager_poweroff(link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_OFF,    0); }
-static int manager_halt    (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, SHUT_HALT,   0); }
+static int manager_reboot  (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, INIT_CMD_REBOOT);   }
+static int manager_poweroff(link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, INIT_CMD_POWEROFF); }
+static int manager_halt    (link_call_t *c, void *u) { (void)u; return dbus_shutdown(c, INIT_CMD_HALT);     }
 
 static int manager_set_debug(link_call_t *call, void *u)
 {

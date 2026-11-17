@@ -8,6 +8,9 @@ All relevant changes are documented in this file.
 
 ### Changes
 
+- `shutdown` now takes a time, `now`, `+MIN`, or `HH:MM`, and a message.
+  Finit warns logged-in users as the time approaches, refuses new logins
+  from five minutes before, and `shutdown -c` cancels.  Issue #149
 - Add `stop-scope`, which processes a stop applies to: `pgroup`, the process
   group of the main process (default), `process`, only the main process,
   `cgroup`, the cgroup of the service, or `mixed` like systemd.  Issue #413
