@@ -55,6 +55,7 @@ EXTRA_DIST		+= keventd.sh
 EXTRA_DIST		+= notify.sh
 EXTRA_DIST		+= pam-session.sh
 EXTRA_DIST		+= pidfile.sh
+EXTRA_DIST		+= pidfile-stopped.sh
 EXTRA_DIST		+= stale-pidfile.sh
 EXTRA_DIST		+= pre-post-serv.sh
 EXTRA_DIST		+= pre-fail.sh
@@ -126,6 +127,7 @@ endif
 TESTS			+= notify.sh
 TESTS			+= pam-session.sh
 TESTS			+= pidfile.sh
+TESTS			+= pidfile-stopped.sh
 TESTS			+= stale-pidfile.sh
 TESTS			+= pre-post-serv.sh
 TESTS			+= pre-fail.sh

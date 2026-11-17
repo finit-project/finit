@@ -169,6 +169,10 @@ All relevant changes are documented in this file.
 - Fix #505: a `notify:systemd` service could send `READY=1` before Finit
   had bound the notify socket, losing it, so the service never became
   ready.  Seen with udevd in an initramfs.  Reported by Aaron Andersen
+- Fix #452: a stopped or waiting service with a daemon-owned PID file was
+  reported as running, with its conditions set, when another process wrote
+  that PID file, e.g., a container started by hand with podman.  Found by
+  Mattias Walström
 - Fix a command whose name starts like a service option, e.g. `logger` or
   `pidof`.  It was taken as the `log` or `pid` option and the next argument
   ran as the command, which also broke the `logger` example in finit.conf(5)
