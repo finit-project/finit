@@ -186,7 +186,8 @@ following settings are available:
     restart is at once, then after 2, 4, 8 seconds, and so on.  A service
     that stays up longer than the current delay is restarted after
     `restart-sec` the next time it crashes, and the delay comes down
-    again the longer the service keeps running.  Useful with
+    again the longer the service keeps running.  `initctl status NAME`
+    shows the current delay and the limit, see below.  Useful with
     `restart = "always"`, for a service that should be retried forever,
     only less and less often
   * `restart = "always"` -- no upper limit on the number of times Finit
@@ -207,6 +208,15 @@ following settings are available:
     service has *crashed*, the system is rebooted
   * `oncrash = "script"` -- similarly, but instead of rebooting, call
     the `exec-stop-post` script with exit code `crashed`, see below
+
+With `restart-max-sec` set, `initctl status` shows the delay before the
+next restart and its limit, here for a service that has crashed four
+times in a row:
+
+    $ initctl status dialer
+    ...
+       Restarts : 7 (4/-1)
+     Restart in : 160 sec (max 300)
 
 Service directories
 -------------------

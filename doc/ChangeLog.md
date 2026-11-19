@@ -17,7 +17,9 @@ All relevant changes are documented in this file.
 - Add `restart-max-sec`, a limit for the delay between restarts of a
   crashing service.  When set, the delay doubles for each restart, from
   `restart-sec` up to the limit, and comes down again as the service keeps
-  running.  Issue #306
+  running.  `initctl status` shows the current delay and the limit, also
+  available as the D-Bus properties `RestartDelay` and `RestartDelayMax`.
+  Issue #306
 - Add `stop-scope`, which processes a stop applies to: `pgroup`, the process
   group of the main process (default), `process`, only the main process,
   `cgroup`, the cgroup of the service, or `mixed` like systemd.  Issue #413

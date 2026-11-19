@@ -187,6 +187,8 @@ All read-only; observable via `Properties.Get` and `Properties.GetAll`.
 | `ExitStatus`    | `u`  | Raw `waitpid(2)` status from the last exit                     |
 | `RestartsTotal` | `u`  | Restarts over the service's lifetime                           |
 | `RestartMax`    | `u`  | Restart limit before the service is blocked                    |
+| `RestartDelay`  | `u`  | Seconds before the next restart, should the service crash      |
+| `RestartDelayMax` | `u` | The `restart-max-sec` setting, 0 when not set                 |
 | `Starts`        | `u`  | Times started, for `manual-start` units                        |
 | `ManualStart`   | `b`  | `manual-start` set in the `.conf`                              |
 | `Forking`       | `b`  | Daemon forks to background                                     |

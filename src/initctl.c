@@ -1495,6 +1495,8 @@ struct svc_row {
 	int32_t  restart_tot;
 	int32_t  restart_cnt;
 	int32_t  restart_max;	/* -1 = restart:always */
+	uint32_t restart_delay;	/* seconds, before the next restart */
+	uint32_t restart_delay_max; /* restart-max-sec, 0 = not set */
 	int      manual;
 	int      forking;
 	int      started;
@@ -1525,6 +1527,8 @@ static void fill_row_from_svc(struct svc_row *r, svc_t *svc)
 	r->restart_tot = (int32_t)svc->restart_tot;
 	r->restart_cnt = (int32_t)svc->restart_cnt;
 	r->restart_max = (int32_t)svc->restart_max;
+	r->restart_delay     = (uint32_t)svc->restart_tmo / 1000;
+	r->restart_delay_max = (uint32_t)svc->restart_tmo_max / 1000;
 	r->manual      = svc->manual;
 	r->forking     = svc->forking;
 	r->started     = svc->started;
@@ -1940,6 +1944,9 @@ static int show_one_row(struct svc_row *r)
 		printf("     Starts : %u\n", r->starts);
 	printf("   Restarts : %d (%d/%d)\n",
 	       r->restart_tot, r->restart_cnt, r->restart_max);
+	if (r->restart_delay_max)
+		printf(" Restart in : %u sec (max %u)\n",
+		       r->restart_delay, r->restart_delay_max);
 	printf("  Runlevels : %s\n",
 	       runlevel_string(runlevel, (int)r->runlevels));
 
@@ -2055,6 +2062,8 @@ static const struct row_field {
 	ROW_U32 ("RestartsTotal", restart_tot),
 	ROW_U32 ("RestartCount",  restart_cnt),
 	ROW_U32 ("RestartMax",    restart_max),
+	ROW_U32 ("RestartDelay",  restart_delay),
+	ROW_U32 ("RestartDelayMax", restart_delay_max),
 	ROW_BOOL("ManualStart",   manual),
 	ROW_BOOL("Forking",       forking),
 	ROW_BOOL("Started",       started),

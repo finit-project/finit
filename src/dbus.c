@@ -797,6 +797,8 @@ SVC_PROP_U32 (svc_prop_runlevels,    runlevels)
 SVC_PROP_U32 (svc_prop_exitstatus,   status)
 SVC_PROP_U32 (svc_prop_restarts_tot, restart_tot)
 SVC_PROP_U32 (svc_prop_restart_max,  restart_max)
+SVC_PROP_U32 (svc_prop_restart_delay, restart_tmo / 1000)		/* msec */
+SVC_PROP_U32 (svc_prop_restart_delay_max, restart_tmo_max / 1000)
 SVC_PROP_U32 (svc_prop_starts,       once)
 SVC_PROP_BOOL(svc_prop_manual,       manual)
 SVC_PROP_BOOL(svc_prop_forking,      forking)
@@ -822,6 +824,8 @@ static const link_property_t service_properties[] = {
 	{ .name = "ExitStatus",   .sig = "u", .getter = svc_prop_exitstatus },
 	{ .name = "RestartsTotal",.sig = "u", .getter = svc_prop_restarts_tot },
 	{ .name = "RestartMax",   .sig = "u", .getter = svc_prop_restart_max },
+	{ .name = "RestartDelay", .sig = "u", .getter = svc_prop_restart_delay },
+	{ .name = "RestartDelayMax", .sig = "u", .getter = svc_prop_restart_delay_max },
 	{ .name = "Starts",       .sig = "u", .getter = svc_prop_starts     },
 	{ .name = "ManualStart",  .sig = "b", .getter = svc_prop_manual     },
 	{ .name = "Forking",      .sig = "b", .getter = svc_prop_forking    },
