@@ -147,8 +147,8 @@ Apr  8 15:02:12 alpine authpriv.notice dropbear[2634]: Password auth succeeded f
 ```
 
 With `-j` the same command gives JSON, for scripts and other programs.
-The view above is kept short for reading, the JSON has everything
-`initctl` gets from Finit about the service:
+The view above is kept short for reading, the JSON also has the
+settings of the service:
 
 ```
 alpine:~# initctl -j status dialer
@@ -168,8 +168,58 @@ alpine:~# initctl -j status dialer
   "restart": {
     "count": 4,
     "max": -1,
+    "sec": 10,
     "delay": 160,
-    "limit": 300
+    "limit": 300,
+    "respawn": false,
+    "oncrash": "ignore"
+  },
+  "name": "dialer",
+  "id": "",
+  "internal": {
+    "job": 12,
+    "oldpid": 1234,
+    "starting": false,
+    "dirty": false,
+    "removed": false
+  },
+  "protected": false,
+  "nowarn": false,
+  "notify": "none",
+  "remain": false,
+  "stop": {
+    "signal": "SIGTERM",
+    "timeout": 3,
+    "scope": "pgroup"
+  },
+  "reload": {
+    "signal": "SIGHUP",
+    "propagate": false
+  },
+  "scripts": {
+    "exec-stop-post": { "command": "/usr/libexec/dialer-down", "timeout": 3 }
+  },
+  "directories": {
+    "runtime": { "name": "dialer", "mode": "0755" },
+    "preserve": "no"
+  },
+  "cgroup-config": {
+    "group": "",
+    "config": "",
+    "delegate": false
+  },
+  "rlimits": {
+    "core": { "soft": 0, "hard": "unlimited" },
+    "nofile": { "soft": 1024, "hard": 4096 },
+    ...
+  },
+  "log": {
+    "enabled": true,
+    "null": false,
+    "console": false,
+    "file": "",
+    "priority": "",
+    "identity": "dialer"
   },
   "pidfile": "none",
   "pid": 0,
@@ -183,10 +233,24 @@ alpine:~# initctl -j status dialer
 In `restart`, `count` is the restart counter that `restart-max`, here
 `max`, is compared to, -1 for `restart = "always"`.  The total since
 boot is in `restarts`.  `delay` is the number of seconds before the
-next restart, should the service crash, and `limit` is its
-`restart-max-sec`, 0 when not set.  `environment`, `condition`, `exit`,
-and the cgroup members `cgroup`, `memory`, `cpu`, and `limits` are left
-out when they do not apply.
+next restart, should the service crash, `sec` is `restart-sec`, and
+`limit` is `restart-max-sec`, both 0 when not set.  All times are in
+seconds.
+
+The settings use the names from the [configuration](config/service-opts.md):
+`scripts` has the `exec-*` scripts that are set, each with its timeout,
+`directories` the `runtime`, `state`, `cache`, `logs`, and `config`
+directories that are set, and `preserve`.  `cgroup-config` is the
+`cgroup` setting of the service, where `cgroup` is the control group
+it runs in right now.  `rlimits` has every resource limit, the ones
+from `rlimit` and the ones the service inherits.  A `tty` has a `tty`
+object with its device and flags where other types have `log`.
+`internal` is state Finit keeps for its own use, it may change between
+releases.
+
+Left out when they do not apply are `environment`, `condition`, `exit`,
+`if`, `provides`, `conflicts`, `groups`, `capabilities`, `pam`, and the
+cgroup members `cgroup`, `memory`, `cpu`, and `limits`.
 
 ```
 alpine:~# initctl -j status dialer | jq .restart.delay

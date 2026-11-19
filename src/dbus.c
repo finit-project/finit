@@ -804,6 +804,107 @@ SVC_PROP_BOOL(svc_prop_manual,       manual)
 SVC_PROP_BOOL(svc_prop_forking,      forking)
 SVC_PROP_BOOL(svc_prop_started,      started)
 
+/* The settings of the service, for initctl -j status */
+#define SVC_PROP_EXPR(fn, writer, expr)				\
+static int fn(link_writer_t *w, void *arg)			\
+{								\
+	svc_t *svc = arg;					\
+								\
+	writer(w, expr);					\
+	return 0;						\
+}
+
+static int svc_prop_provides(link_writer_t *w, void *arg)
+{
+	char buf[MAX_NUM_PROVIDES * MAX_COND_LEN];
+
+	link_w_string(w, svc_provides_str(arg, buf, sizeof(buf)));
+	return 0;
+}
+
+static int svc_prop_rlimits(link_writer_t *w, void *arg)
+{
+	svc_t *svc = arg;
+	char buf[1024];
+
+	link_w_string(w, rlimits2str(svc->rlimit, buf, sizeof(buf)));
+	return 0;
+}
+
+static int svc_prop_stop_signal(link_writer_t *w, void *arg)
+{
+	svc_t *svc = arg;
+	char buf[16];
+
+	/* Not sig_name(), initctl has only sig2str() for its own transport */
+	snprintf(buf, sizeof(buf), "SIG%s", sig2str(svc->sighalt));
+	link_w_string(w, buf);
+	return 0;
+}
+
+SVC_PROP_BOOL(svc_prop_remain, remain)
+SVC_PROP_STR (svc_prop_if, ifstmt)
+SVC_PROP_STR (svc_prop_conflicts, conflict)
+SVC_PROP_STR (svc_prop_extra_groups, supgroups)
+SVC_PROP_STR (svc_prop_capabilities, capabilities)
+SVC_PROP_STR (svc_prop_pam, pam)
+SVC_PROP_U32 (svc_prop_stop_timeout, killdelay / 1000)
+SVC_PROP_U32 (svc_prop_restart_sec, restart_saved / 1000)
+SVC_PROP_BOOL(svc_prop_respawn, respawn)
+SVC_PROP_BOOL(svc_prop_protected, protect)
+SVC_PROP_STR (svc_prop_id, id)
+SVC_PROP_U32 (svc_prop_job, job)
+SVC_PROP_U32 (svc_prop_old_pid, oldpid)
+SVC_PROP_BOOL(svc_prop_dirty, dirty)
+SVC_PROP_BOOL(svc_prop_removed, removed)
+SVC_PROP_BOOL(svc_prop_starting, starting)
+SVC_PROP_BOOL(svc_prop_no_warn, nowarn)
+SVC_PROP_BOOL(svc_prop_reload_propagate, flux_reload)
+SVC_PROP_STR (svc_prop_cgroup_name, cgroup.name)
+SVC_PROP_STR (svc_prop_cgroup_config, cgroup.cfg)
+SVC_PROP_BOOL(svc_prop_cgroup_delegate, cgroup.delegate)
+SVC_PROP_U32 (svc_prop_runtime_dir_mode, dir_mode[0])
+SVC_PROP_U32 (svc_prop_state_dir_mode, dir_mode[1])
+SVC_PROP_U32 (svc_prop_cache_dir_mode, dir_mode[2])
+SVC_PROP_U32 (svc_prop_logs_dir_mode, dir_mode[3])
+SVC_PROP_U32 (svc_prop_config_dir_mode, dir_mode[4])
+SVC_PROP_STR (svc_prop_runtime_dir, runtime_dir)
+SVC_PROP_STR (svc_prop_state_dir, state_dir)
+SVC_PROP_STR (svc_prop_cache_dir, cache_dir)
+SVC_PROP_STR (svc_prop_logs_dir, logs_dir)
+SVC_PROP_STR (svc_prop_config_dir, config_dir)
+SVC_PROP_STR (svc_prop_exec_start_pre, pre_script)
+SVC_PROP_U32 (svc_prop_exec_start_pre_timeout, pre_tmo / 1000)
+SVC_PROP_STR (svc_prop_exec_start_ready, ready_script)
+SVC_PROP_U32 (svc_prop_exec_start_ready_timeout, ready_tmo / 1000)
+SVC_PROP_STR (svc_prop_exec_stop, stop_script)
+SVC_PROP_U32 (svc_prop_exec_stop_timeout, stop_tmo / 1000)
+SVC_PROP_STR (svc_prop_exec_stop_post, post_script)
+SVC_PROP_U32 (svc_prop_exec_stop_post_timeout, post_tmo / 1000)
+SVC_PROP_STR (svc_prop_exec_reload, reload_script)
+SVC_PROP_U32 (svc_prop_exec_reload_timeout, reload_tmo / 1000)
+SVC_PROP_STR (svc_prop_exec_cleanup, cleanup_script)
+SVC_PROP_U32 (svc_prop_exec_cleanup_timeout, cleanup_tmo / 1000)
+SVC_PROP_EXPR(svc_prop_notify, link_w_string, svc_notify_str(svc))
+SVC_PROP_EXPR(svc_prop_stop_scope, link_w_string, svc_scope_str(svc->stop_scope))
+SVC_PROP_EXPR(svc_prop_reload_signal, link_w_string, svc->sighup ? "SIGHUP" : "none")
+SVC_PROP_EXPR(svc_prop_on_crash, link_w_string, svc_oncrash_str(svc))
+SVC_PROP_EXPR(svc_prop_runtime_dir_preserve, link_w_string, svc_preserve_str(svc))
+SVC_PROP_EXPR(svc_prop_log, link_w_bool, !svc_is_tty(svc) ? svc->log.enabled : 0)
+SVC_PROP_EXPR(svc_prop_log_null, link_w_bool, !svc_is_tty(svc) ? svc->log.null : 0)
+SVC_PROP_EXPR(svc_prop_log_console, link_w_bool, !svc_is_tty(svc) ? svc->log.console : 0)
+SVC_PROP_EXPR(svc_prop_log_file, link_w_string, !svc_is_tty(svc) ? svc->log.file : "")
+SVC_PROP_EXPR(svc_prop_log_priority, link_w_string, !svc_is_tty(svc) ? svc->log.prio : "")
+SVC_PROP_EXPR(svc_prop_log_identity, link_w_string, !svc_is_tty(svc) ? svc->log.ident : "")
+SVC_PROP_EXPR(svc_prop_tty_device, link_w_string, svc_is_tty(svc) ? svc->dev : "")
+SVC_PROP_EXPR(svc_prop_tty_baud, link_w_string, svc_is_tty(svc) ? svc->baud : "")
+SVC_PROP_EXPR(svc_prop_tty_term, link_w_string, svc_is_tty(svc) ? svc->term : "")
+SVC_PROP_EXPR(svc_prop_tty_no_clear, link_w_bool, svc_is_tty(svc) ? svc->noclear : 0)
+SVC_PROP_EXPR(svc_prop_tty_no_wait, link_w_bool, svc_is_tty(svc) ? svc->nowait : 0)
+SVC_PROP_EXPR(svc_prop_tty_no_login, link_w_bool, svc_is_tty(svc) ? svc->nologin : 0)
+SVC_PROP_EXPR(svc_prop_tty_no_tty, link_w_bool, svc_is_tty(svc) ? svc->notty : 0)
+SVC_PROP_EXPR(svc_prop_tty_rescue, link_w_bool, svc_is_tty(svc) ? svc->rescue : 0)
+
 static const link_property_t service_properties[] = {
 	{ .name = "Identity",     .sig = "s", .getter = svc_prop_identity   },
 	{ .name = "Name",         .sig = "s", .getter = svc_prop_name       },
@@ -830,6 +931,71 @@ static const link_property_t service_properties[] = {
 	{ .name = "ManualStart",  .sig = "b", .getter = svc_prop_manual     },
 	{ .name = "Forking",      .sig = "b", .getter = svc_prop_forking    },
 	{ .name = "Started",      .sig = "b", .getter = svc_prop_started    },
+	{ .name = "Notify", .sig = "s", .getter = svc_prop_notify },
+	{ .name = "Remain", .sig = "b", .getter = svc_prop_remain },
+	{ .name = "If", .sig = "s", .getter = svc_prop_if },
+	{ .name = "Provides", .sig = "s", .getter = svc_prop_provides },
+	{ .name = "Conflicts", .sig = "s", .getter = svc_prop_conflicts },
+	{ .name = "ExtraGroups", .sig = "s", .getter = svc_prop_extra_groups },
+	{ .name = "Capabilities", .sig = "s", .getter = svc_prop_capabilities },
+	{ .name = "Pam", .sig = "s", .getter = svc_prop_pam },
+	{ .name = "StopSignal", .sig = "s", .getter = svc_prop_stop_signal },
+	{ .name = "StopTimeout", .sig = "u", .getter = svc_prop_stop_timeout },
+	{ .name = "StopScope", .sig = "s", .getter = svc_prop_stop_scope },
+	{ .name = "ReloadSignal", .sig = "s", .getter = svc_prop_reload_signal },
+	{ .name = "RestartSec", .sig = "u", .getter = svc_prop_restart_sec },
+	{ .name = "Respawn", .sig = "b", .getter = svc_prop_respawn },
+	{ .name = "OnCrash", .sig = "s", .getter = svc_prop_on_crash },
+	{ .name = "RuntimeDir", .sig = "s", .getter = svc_prop_runtime_dir },
+	{ .name = "StateDir", .sig = "s", .getter = svc_prop_state_dir },
+	{ .name = "CacheDir", .sig = "s", .getter = svc_prop_cache_dir },
+	{ .name = "LogsDir", .sig = "s", .getter = svc_prop_logs_dir },
+	{ .name = "ConfigDir", .sig = "s", .getter = svc_prop_config_dir },
+	{ .name = "RuntimeDirPreserve", .sig = "s", .getter = svc_prop_runtime_dir_preserve },
+	{ .name = "RuntimeDirMode", .sig = "u", .getter = svc_prop_runtime_dir_mode },
+	{ .name = "StateDirMode", .sig = "u", .getter = svc_prop_state_dir_mode },
+	{ .name = "CacheDirMode", .sig = "u", .getter = svc_prop_cache_dir_mode },
+	{ .name = "LogsDirMode", .sig = "u", .getter = svc_prop_logs_dir_mode },
+	{ .name = "ConfigDirMode", .sig = "u", .getter = svc_prop_config_dir_mode },
+	{ .name = "Protected", .sig = "b", .getter = svc_prop_protected },
+	{ .name = "Id", .sig = "s", .getter = svc_prop_id },
+	{ .name = "Job", .sig = "u", .getter = svc_prop_job },
+	{ .name = "OldPid", .sig = "u", .getter = svc_prop_old_pid },
+	{ .name = "Dirty", .sig = "b", .getter = svc_prop_dirty },
+	{ .name = "Removed", .sig = "b", .getter = svc_prop_removed },
+	{ .name = "Starting", .sig = "b", .getter = svc_prop_starting },
+	{ .name = "NoWarn", .sig = "b", .getter = svc_prop_no_warn },
+	{ .name = "ReloadPropagate", .sig = "b", .getter = svc_prop_reload_propagate },
+	{ .name = "CgroupName", .sig = "s", .getter = svc_prop_cgroup_name },
+	{ .name = "CgroupConfig", .sig = "s", .getter = svc_prop_cgroup_config },
+	{ .name = "CgroupDelegate", .sig = "b", .getter = svc_prop_cgroup_delegate },
+	{ .name = "Rlimits", .sig = "s", .getter = svc_prop_rlimits },
+	{ .name = "ExecStartPre", .sig = "s", .getter = svc_prop_exec_start_pre },
+	{ .name = "ExecStartPreTimeout", .sig = "u", .getter = svc_prop_exec_start_pre_timeout },
+	{ .name = "ExecStartReady", .sig = "s", .getter = svc_prop_exec_start_ready },
+	{ .name = "ExecStartReadyTimeout", .sig = "u", .getter = svc_prop_exec_start_ready_timeout },
+	{ .name = "ExecStop", .sig = "s", .getter = svc_prop_exec_stop },
+	{ .name = "ExecStopTimeout", .sig = "u", .getter = svc_prop_exec_stop_timeout },
+	{ .name = "ExecStopPost", .sig = "s", .getter = svc_prop_exec_stop_post },
+	{ .name = "ExecStopPostTimeout", .sig = "u", .getter = svc_prop_exec_stop_post_timeout },
+	{ .name = "ExecReload", .sig = "s", .getter = svc_prop_exec_reload },
+	{ .name = "ExecReloadTimeout", .sig = "u", .getter = svc_prop_exec_reload_timeout },
+	{ .name = "ExecCleanup", .sig = "s", .getter = svc_prop_exec_cleanup },
+	{ .name = "ExecCleanupTimeout", .sig = "u", .getter = svc_prop_exec_cleanup_timeout },
+	{ .name = "Log", .sig = "b", .getter = svc_prop_log },
+	{ .name = "LogNull", .sig = "b", .getter = svc_prop_log_null },
+	{ .name = "LogConsole", .sig = "b", .getter = svc_prop_log_console },
+	{ .name = "LogFile", .sig = "s", .getter = svc_prop_log_file },
+	{ .name = "LogPriority", .sig = "s", .getter = svc_prop_log_priority },
+	{ .name = "LogIdentity", .sig = "s", .getter = svc_prop_log_identity },
+	{ .name = "TtyDevice", .sig = "s", .getter = svc_prop_tty_device },
+	{ .name = "TtyBaud", .sig = "s", .getter = svc_prop_tty_baud },
+	{ .name = "TtyTerm", .sig = "s", .getter = svc_prop_tty_term },
+	{ .name = "TtyNoClear", .sig = "b", .getter = svc_prop_tty_no_clear },
+	{ .name = "TtyNoWait", .sig = "b", .getter = svc_prop_tty_no_wait },
+	{ .name = "TtyNoLogin", .sig = "b", .getter = svc_prop_tty_no_login },
+	{ .name = "TtyNoTty", .sig = "b", .getter = svc_prop_tty_no_tty },
+	{ .name = "TtyRescue", .sig = "b", .getter = svc_prop_tty_rescue },
 	{ NULL, NULL, NULL }
 };
 

@@ -95,6 +95,7 @@ char *code2str     (int code);
 int   str2rlim     (char *str);
 char *rlim2str     (int rlim);
 char *lim2str      (struct rlimit *rlim);
+char *rlimits2str  (struct rlimit *rlimit, char *buf, size_t len);
 
 void  do_sleep     (unsigned int sec);
 void  do_usleep    (unsigned int usec);

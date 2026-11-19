@@ -1475,6 +1475,16 @@ static int svc_compare(svc_t *svc, char *arg)
  * from a raw svc_t on the legacy socket path or from Service1
  * properties on the D-Bus path, rendered by the same printers.
  */
+/* In the order of the script[] and dir[] members of svc_row */
+#define NUM_SCRIPTS 6
+static const char *script_names[NUM_SCRIPTS] = {
+	"exec-start-pre", "exec-start-ready", "exec-stop",
+	"exec-stop-post", "exec-reload", "exec-cleanup",
+};
+static const char *dir_names[NUM_SVCDIRS] = {
+	"runtime", "state", "cache", "logs", "config",
+};
+
 struct svc_row {
 	char     ident[MAX_IDENT_LEN];
 	char     state[16];
@@ -1500,6 +1510,56 @@ struct svc_row {
 	int      manual;
 	int      forking;
 	int      started;
+
+	/* Settings, only in the JSON output */
+	char     name[MAX_ARG_LEN];
+	char     id[MAX_ID_LEN];
+	uint32_t job;
+	uint32_t oldpid;
+	int      dirty;
+	int      removed;
+	int      starting;
+	char     rlimits[1024];		/* name=soft:hard,... */
+	char     cgroup_name[16];
+	char     cgroup_cfg[128];
+	uint32_t dir_mode[NUM_SVCDIRS];
+	int      cgroup_delegate;
+	int      protect;
+	int      nowarn;
+	int      flux_reload;
+	char     notify[8];
+	char     ifstmt[MAX_IDENT_LEN];
+	char     provides[MAX_NUM_PROVIDES * MAX_COND_LEN];
+	char     conflicts[MAX_ARG_LEN];
+	char     supgroups[MAX_SUPGROUPS_LEN];
+	char     caps[MAX_CMD_LEN];
+	char     pam[MAX_ARG_LEN];
+	char     stop_signal[16];
+	char     stop_scope[8];
+	char     reload_signal[8];
+	char     oncrash[8];
+	char     dir[NUM_SVCDIRS][MAX_ARG_LEN];
+	char     preserve[8];
+	char     script[NUM_SCRIPTS][MAX_CMD_LEN];
+	uint32_t script_tmo[NUM_SCRIPTS];	/* seconds */
+	char     log_file[64];
+	char     log_prio[20];
+	char     log_ident[20];
+	char     tty_dev[32];
+	char     tty_baud[10];
+	char     tty_term[10];
+	uint32_t stop_timeout;	/* seconds */
+	uint32_t restart_sec;	/* restart-sec, 0 = not set */
+	int      remain;
+	int      respawn;
+	int      log;
+	int      log_null;
+	int      log_console;
+	int      tty_noclear;
+	int      tty_nowait;
+	int      tty_nologin;
+	int      tty_notty;
+	int      tty_rescue;
 };
 
 static void fill_row_from_svc(struct svc_row *r, svc_t *svc)
@@ -1532,6 +1592,73 @@ static void fill_row_from_svc(struct svc_row *r, svc_t *svc)
 	r->manual      = svc->manual;
 	r->forking     = svc->forking;
 	r->started     = svc->started;
+
+	strlcpy(r->notify, svc_notify_str(svc), sizeof(r->notify));
+	r->remain = svc->remain;
+	strlcpy(r->ifstmt, svc->ifstmt, sizeof(r->ifstmt));
+	svc_provides_str(svc, r->provides, sizeof(r->provides));
+	strlcpy(r->conflicts, svc->conflict, sizeof(r->conflicts));
+	strlcpy(r->supgroups, svc->supgroups, sizeof(r->supgroups));
+	strlcpy(r->caps, svc->capabilities, sizeof(r->caps));
+	strlcpy(r->pam, svc->pam, sizeof(r->pam));
+	snprintf(r->stop_signal, sizeof(r->stop_signal), "SIG%s", sig2str(svc->sighalt));
+	r->stop_timeout = (uint32_t)(svc->killdelay / 1000);
+	strlcpy(r->stop_scope, svc_scope_str(svc->stop_scope), sizeof(r->stop_scope));
+	strlcpy(r->reload_signal, svc->sighup ? "SIGHUP" : "none", sizeof(r->reload_signal));
+	r->restart_sec = (uint32_t)(svc->restart_saved / 1000);
+	r->respawn = svc->respawn;
+	strlcpy(r->name, svc->name, sizeof(r->name));
+	strlcpy(r->id, svc->id, sizeof(r->id));
+	r->job = (uint32_t)svc->job;
+	r->oldpid = (uint32_t)svc->oldpid;
+	r->dirty = svc->dirty;
+	r->removed = svc->removed;
+	r->starting = svc->starting;
+	rlimits2str(svc->rlimit, r->rlimits, sizeof(r->rlimits));
+	strlcpy(r->cgroup_name, svc->cgroup.name, sizeof(r->cgroup_name));
+	strlcpy(r->cgroup_cfg, svc->cgroup.cfg, sizeof(r->cgroup_cfg));
+	r->cgroup_delegate = svc->cgroup.delegate;
+	for (int i = 0; i < NUM_SVCDIRS; i++)
+		r->dir_mode[i] = (uint32_t)svc->dir_mode[i];
+	r->protect = svc->protect;
+	r->nowarn = svc->nowarn;
+	r->flux_reload = svc->flux_reload;
+	strlcpy(r->oncrash, svc_oncrash_str(svc), sizeof(r->oncrash));
+	strlcpy(r->dir[0], svc->runtime_dir, sizeof(r->dir[0]));
+	strlcpy(r->dir[1], svc->state_dir, sizeof(r->dir[1]));
+	strlcpy(r->dir[2], svc->cache_dir, sizeof(r->dir[2]));
+	strlcpy(r->dir[3], svc->logs_dir, sizeof(r->dir[3]));
+	strlcpy(r->dir[4], svc->config_dir, sizeof(r->dir[4]));
+	strlcpy(r->preserve, svc_preserve_str(svc), sizeof(r->preserve));
+	strlcpy(r->script[0], svc->pre_script, sizeof(r->script[0]));
+	r->script_tmo[0] = (uint32_t)(svc->pre_tmo / 1000);
+	strlcpy(r->script[1], svc->ready_script, sizeof(r->script[1]));
+	r->script_tmo[1] = (uint32_t)(svc->ready_tmo / 1000);
+	strlcpy(r->script[2], svc->stop_script, sizeof(r->script[2]));
+	r->script_tmo[2] = (uint32_t)(svc->stop_tmo / 1000);
+	strlcpy(r->script[3], svc->post_script, sizeof(r->script[3]));
+	r->script_tmo[3] = (uint32_t)(svc->post_tmo / 1000);
+	strlcpy(r->script[4], svc->reload_script, sizeof(r->script[4]));
+	r->script_tmo[4] = (uint32_t)(svc->reload_tmo / 1000);
+	strlcpy(r->script[5], svc->cleanup_script, sizeof(r->script[5]));
+	r->script_tmo[5] = (uint32_t)(svc->cleanup_tmo / 1000);
+	if (svc_is_tty(svc)) {
+		strlcpy(r->tty_dev, svc->dev, sizeof(r->tty_dev));
+		strlcpy(r->tty_baud, svc->baud, sizeof(r->tty_baud));
+		strlcpy(r->tty_term, svc->term, sizeof(r->tty_term));
+		r->tty_noclear = svc->noclear;
+		r->tty_nowait = svc->nowait;
+		r->tty_nologin = svc->nologin;
+		r->tty_notty = svc->notty;
+		r->tty_rescue = svc->rescue;
+	} else {
+		r->log = svc->log.enabled;
+		r->log_null = svc->log.null;
+		r->log_console = svc->log.console;
+		strlcpy(r->log_file, svc->log.file, sizeof(r->log_file));
+		strlcpy(r->log_prio, svc->log.prio, sizeof(r->log_prio));
+		strlcpy(r->log_ident, svc->log.ident, sizeof(r->log_ident));
+	}
 }
 
 static const char *pidfile_str(struct svc_row *r)
@@ -1700,6 +1827,176 @@ static char *json_escape(const char *str)
 	return buf;
 }
 
+static const char *json_bool(int val)
+{
+	return val ? "true" : "false";
+}
+
+/* "a,b" as [ "a", "b" ], nothing when the list is empty */
+static void json_list(FILE *fp, const char *indent, const char *key, const char *list)
+{
+	char *buf = strdupa(list), *tok, *ptr;
+	const char *sep = "";
+
+	if (!list[0])
+		return;
+
+	fprintf(fp, "%s  \"%s\": [", indent, key);
+	for (tok = strtok_r(buf, ",", &ptr); tok; tok = strtok_r(NULL, ",", &ptr)) {
+		fprintf(fp, "%s \"%s\"", sep, json_escape(tok));
+		sep = ",";
+	}
+	fprintf(fp, " ],\n");
+}
+
+/* "nofile=1024:unlimited,..." from rlimits2str() as an object */
+static void json_rlimits(FILE *fp, const char *indent, const char *rlimits)
+{
+	char *buf = strdupa(rlimits), *tok, *ptr;
+	const char *sep = "";
+
+	fprintf(fp, "%s  \"rlimits\": {", indent);
+	for (tok = strtok_r(buf, ",", &ptr); tok; tok = strtok_r(NULL, ",", &ptr)) {
+		char *soft = strchr(tok, '='), *hard;
+		const char *q[2];
+
+		if (!soft || !(hard = strchr(soft, ':')))
+			continue;
+		*soft++ = 0;
+		*hard++ = 0;
+
+		/* unlimited is the only value that is not a number */
+		q[0] = soft[0] == 'u' ? "\"" : "";
+		q[1] = hard[0] == 'u' ? "\"" : "";
+		fprintf(fp, "%s\n%s    \"%s\": { \"soft\": %s%s%s, \"hard\": %s%s%s }",
+			sep, indent, tok, q[0], soft, q[0], q[1], hard, q[1]);
+		sep = ",";
+	}
+	if (sep[0])
+		fprintf(fp, "\n%s  ", indent);
+	fprintf(fp, "},\n");
+}
+
+/* The settings of a service, what the plain view leaves out */
+static void json_settings(FILE *fp, struct svc_row *r, const char *indent)
+{
+	const char *sep = "";
+	int i;
+
+	fprintf(fp, "%s  \"name\": \"%s\",\n", indent, json_escape(r->name));
+	fprintf(fp, "%s  \"id\": \"%s\",\n", indent, json_escape(r->id));
+	fprintf(fp,
+		"%s  \"internal\": {\n"
+		"%s    \"job\": %u,\n"
+		"%s    \"oldpid\": %u,\n"
+		"%s    \"starting\": %s,\n"
+		"%s    \"dirty\": %s,\n"
+		"%s    \"removed\": %s\n"
+		"%s  },\n",
+		indent,
+		indent, r->job,
+		indent, r->oldpid,
+		indent, json_bool(r->starting),
+		indent, json_bool(r->dirty),
+		indent, json_bool(r->removed),
+		indent);
+	fprintf(fp, "%s  \"protected\": %s,\n", indent, json_bool(r->protect));
+	fprintf(fp, "%s  \"nowarn\": %s,\n", indent, json_bool(r->nowarn));
+	fprintf(fp, "%s  \"notify\": \"%s\",\n", indent, r->notify);
+	fprintf(fp, "%s  \"remain\": %s,\n", indent, json_bool(r->remain));
+	if (r->ifstmt[0])
+		fprintf(fp, "%s  \"if\": \"%s\",\n", indent, json_escape(r->ifstmt));
+	json_list(fp, indent, "provides", r->provides);
+	json_list(fp, indent, "conflicts", r->conflicts);
+
+	fprintf(fp,
+		"%s  \"stop\": {\n"
+		"%s    \"signal\": \"%s\",\n"
+		"%s    \"timeout\": %u,\n"
+		"%s    \"scope\": \"%s\"\n"
+		"%s  },\n"
+		"%s  \"reload\": {\n"
+		"%s    \"signal\": \"%s\",\n"
+		"%s    \"propagate\": %s\n"
+		"%s  },\n",
+		indent,
+		indent, r->stop_signal,
+		indent, r->stop_timeout,
+		indent, r->stop_scope,
+		indent,
+		indent,
+		indent, r->reload_signal,
+		indent, json_bool(r->flux_reload),
+		indent);
+
+	fprintf(fp, "%s  \"scripts\": {", indent);
+	for (i = 0; i < NUM_SCRIPTS; i++) {
+		if (!r->script[i][0])
+			continue;
+
+		fprintf(fp, "%s\n%s    \"%s\": { \"command\": \"%s\", \"timeout\": %u }",
+			sep, indent, script_names[i], json_escape(r->script[i]), r->script_tmo[i]);
+		sep = ",";
+	}
+	if (sep[0])
+		fprintf(fp, "\n%s  ", indent);
+	fprintf(fp, "},\n");
+	sep = "";
+
+	fprintf(fp, "%s  \"directories\": {", indent);
+	for (i = 0; i < NUM_SVCDIRS; i++) {
+		if (!r->dir[i][0])
+			continue;
+
+		fprintf(fp, "%s\n%s    \"%s\": { \"name\": \"%s\", \"mode\": \"%04o\" }",
+			sep, indent, dir_names[i], json_escape(r->dir[i]), r->dir_mode[i]);
+		sep = ",";
+	}
+	if (sep[0])
+		fprintf(fp, ",\n%s    \"preserve\": \"%s\"\n%s  ", indent, r->preserve, indent);
+	fprintf(fp, "},\n");
+
+	fprintf(fp, "%s  \"cgroup-config\": {\n", indent);
+	fprintf(fp, "%s    \"group\": \"%s\",\n", indent, json_escape(r->cgroup_name));
+	fprintf(fp, "%s    \"config\": \"%s\",\n", indent, json_escape(r->cgroup_cfg));
+	fprintf(fp, "%s    \"delegate\": %s\n%s  },\n", indent, json_bool(r->cgroup_delegate), indent);
+
+	json_rlimits(fp, indent, r->rlimits);
+
+	if (!strcmp(r->type, "tty")) {
+		fprintf(fp, "%s  \"tty\": {\n", indent);
+		fprintf(fp, "%s    \"device\": \"%s\",\n", indent, json_escape(r->tty_dev));
+		fprintf(fp, "%s    \"baud\": \"%s\",\n", indent, r->tty_baud);
+		fprintf(fp, "%s    \"term\": \"%s\",\n", indent, json_escape(r->tty_term));
+		fprintf(fp,
+			"%s    \"noclear\": %s,\n"
+			"%s    \"nowait\": %s,\n"
+			"%s    \"nologin\": %s,\n"
+			"%s    \"notty\": %s,\n"
+			"%s    \"rescue\": %s\n"
+			"%s  },\n",
+			indent, json_bool(r->tty_noclear),
+			indent, json_bool(r->tty_nowait),
+			indent, json_bool(r->tty_nologin),
+			indent, json_bool(r->tty_notty),
+			indent, json_bool(r->tty_rescue),
+			indent);
+	} else {
+		fprintf(fp,
+			"%s  \"log\": {\n"
+			"%s    \"enabled\": %s,\n"
+			"%s    \"null\": %s,\n"
+			"%s    \"console\": %s,\n",
+			indent,
+			indent, json_bool(r->log),
+			indent, json_bool(r->log_null),
+			indent, json_bool(r->log_console));
+		fprintf(fp, "%s    \"file\": \"%s\",\n", indent, json_escape(r->log_file));
+		fprintf(fp, "%s    \"priority\": \"%s\",\n", indent, json_escape(r->log_prio));
+		fprintf(fp, "%s    \"identity\": \"%s\"\n%s  },\n", indent, json_escape(r->log_ident), indent);
+	}
+}
+
 static int json_status_one(FILE *fp, struct svc_row *r, char *indent, int prev)
 {
 	const char *pidfn = pidfile_str(r);
@@ -1763,19 +2060,26 @@ static int json_status_one(FILE *fp, struct svc_row *r, char *indent, int prev)
 		"%s  \"restart\": {\n"
 		"%s    \"count\": %d,\n"
 		"%s    \"max\": %d,\n"
+		"%s    \"sec\": %u,\n"
 		"%s    \"delay\": %u,\n"
-		"%s    \"limit\": %u\n"
+		"%s    \"limit\": %u,\n"
+		"%s    \"respawn\": %s,\n"
+		"%s    \"oncrash\": \"%s\"\n"
 		"%s  },\n",
-		indent, r->manual ? "true" : "false",
-		indent, r->started ? "true" : "false",
+		indent, json_bool(r->manual),
+		indent, json_bool(r->started),
 		indent, r->starts,
 		indent, r->restart_tot,
 		indent,
 		indent, r->restart_cnt,
 		indent, r->restart_max,
+		indent, r->restart_sec,
 		indent, r->restart_delay,
 		indent, r->restart_delay_max,
+		indent, json_bool(r->respawn),
+		indent, r->oncrash,
 		indent);
+	json_settings(fp, r, indent);
 
 	/* Add memory and CPU information if cgroup support is available */
 	if (cgrp && r->pid > 1) {
@@ -1885,14 +2189,19 @@ static int json_status_one(FILE *fp, struct svc_row *r, char *indent, int prev)
 		"%s  \"pidfile\": \"%s\",\n"
 		"%s  \"pid\": %u,\n"
 		"%s  \"user\": \"%s\",\n"
-		"%s  \"group\": \"%s\",\n"
-		"%s  \"uptime\": %ld,\n"
-		"%s  \"runlevels\": %s\n"
-		"%s}",
+		"%s  \"group\": \"%s\",\n",
 		indent, pidfn,
 		indent, r->pid,
 		indent, r->user,
-		indent, r->grp,
+		indent, r->grp);
+	json_list(fp, indent, "groups", r->supgroups);
+	json_list(fp, indent, "capabilities", r->caps);
+	if (r->pam[0])
+		fprintf(fp, "%s  \"pam\": \"%s\",\n", indent, json_escape(r->pam));
+	fprintf(fp,
+		"%s  \"uptime\": %ld,\n"
+		"%s  \"runlevels\": %s\n"
+		"%s}",
 		indent, (long)r->uptime,
 		indent, runlevel_arr((int)r->runlevels),
 		indent);
@@ -2082,6 +2391,72 @@ static const struct row_field {
 	ROW_BOOL("ManualStart",   manual),
 	ROW_BOOL("Forking",       forking),
 	ROW_BOOL("Started",       started),
+	ROW_STR ("Notify", notify),
+	ROW_BOOL("Remain", remain),
+	ROW_STR ("If", ifstmt),
+	ROW_STR ("Provides", provides),
+	ROW_STR ("Conflicts", conflicts),
+	ROW_STR ("ExtraGroups", supgroups),
+	ROW_STR ("Capabilities", caps),
+	ROW_STR ("Pam", pam),
+	ROW_STR ("StopSignal", stop_signal),
+	ROW_U32 ("StopTimeout", stop_timeout),
+	ROW_STR ("StopScope", stop_scope),
+	ROW_STR ("ReloadSignal", reload_signal),
+	ROW_U32 ("RestartSec", restart_sec),
+	ROW_BOOL("Respawn", respawn),
+	ROW_STR ("Name", name),
+	ROW_STR ("Id", id),
+	ROW_U32 ("Job", job),
+	ROW_U32 ("OldPid", oldpid),
+	ROW_BOOL("Dirty", dirty),
+	ROW_BOOL("Removed", removed),
+	ROW_BOOL("Starting", starting),
+	ROW_STR ("Rlimits", rlimits),
+	ROW_STR ("CgroupName", cgroup_name),
+	ROW_STR ("CgroupConfig", cgroup_cfg),
+	ROW_BOOL("CgroupDelegate", cgroup_delegate),
+	ROW_U32 ("RuntimeDirMode", dir_mode[0]),
+	ROW_U32 ("StateDirMode", dir_mode[1]),
+	ROW_U32 ("CacheDirMode", dir_mode[2]),
+	ROW_U32 ("LogsDirMode", dir_mode[3]),
+	ROW_U32 ("ConfigDirMode", dir_mode[4]),
+	ROW_BOOL("Protected", protect),
+	ROW_BOOL("NoWarn", nowarn),
+	ROW_BOOL("ReloadPropagate", flux_reload),
+	ROW_STR ("OnCrash", oncrash),
+	ROW_STR ("RuntimeDir", dir[0]),
+	ROW_STR ("StateDir", dir[1]),
+	ROW_STR ("CacheDir", dir[2]),
+	ROW_STR ("LogsDir", dir[3]),
+	ROW_STR ("ConfigDir", dir[4]),
+	ROW_STR ("RuntimeDirPreserve", preserve),
+	ROW_STR ("ExecStartPre", script[0]),
+	ROW_U32 ("ExecStartPreTimeout", script_tmo[0]),
+	ROW_STR ("ExecStartReady", script[1]),
+	ROW_U32 ("ExecStartReadyTimeout", script_tmo[1]),
+	ROW_STR ("ExecStop", script[2]),
+	ROW_U32 ("ExecStopTimeout", script_tmo[2]),
+	ROW_STR ("ExecStopPost", script[3]),
+	ROW_U32 ("ExecStopPostTimeout", script_tmo[3]),
+	ROW_STR ("ExecReload", script[4]),
+	ROW_U32 ("ExecReloadTimeout", script_tmo[4]),
+	ROW_STR ("ExecCleanup", script[5]),
+	ROW_U32 ("ExecCleanupTimeout", script_tmo[5]),
+	ROW_BOOL("Log", log),
+	ROW_BOOL("LogNull", log_null),
+	ROW_BOOL("LogConsole", log_console),
+	ROW_STR ("LogFile", log_file),
+	ROW_STR ("LogPriority", log_prio),
+	ROW_STR ("LogIdentity", log_ident),
+	ROW_STR ("TtyDevice", tty_dev),
+	ROW_STR ("TtyBaud", tty_baud),
+	ROW_STR ("TtyTerm", tty_term),
+	ROW_BOOL("TtyNoClear", tty_noclear),
+	ROW_BOOL("TtyNoWait", tty_nowait),
+	ROW_BOOL("TtyNoLogin", tty_nologin),
+	ROW_BOOL("TtyNoTty", tty_notty),
+	ROW_BOOL("TtyRescue", tty_rescue),
 	{ NULL, 0, 0, 0 }
 };
 

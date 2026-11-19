@@ -2013,23 +2013,16 @@ static void parse_sighalt(svc_t *svc, char *arg)
 	svc->sighalt = signo;
 }
 
-static const char *scopes[] = {
-	[SVC_SCOPE_PGROUP]  = "pgroup",
-	[SVC_SCOPE_PROCESS] = "process",
-	[SVC_SCOPE_CGROUP]  = "cgroup",
-	[SVC_SCOPE_MIXED]   = "mixed",
-};
-
 static svc_scope_t parse_scope(svc_t *svc, const char *arg)
 {
-	size_t i;
+	svc_scope_t i;
 
 	if (!arg)
 		return SVC_SCOPE_PGROUP;
 
-	for (i = 0; i < NELEMS(scopes); i++) {
-		if (!strcmp(arg, scopes[i]))
-			return (svc_scope_t)i;
+	for (i = SVC_SCOPE_PGROUP; i <= SVC_SCOPE_MIXED; i++) {
+		if (!strcmp(arg, svc_scope_str(i)))
+			return i;
 	}
 
 	warnx("%s: unknown stop-scope '%s', using pgroup", svc_ident(svc, NULL, 0), arg);
@@ -2059,7 +2052,7 @@ static void scope_check(svc_t *svc)
 			continue;
 
 		logit(LOG_WARNING, "%s: stop-scope %s also reaches %s, give it a cgroup name of its own",
-		      svc_ident(scoped, a, sizeof(a)), scopes[scoped->stop_scope],
+		      svc_ident(scoped, a, sizeof(a)), svc_scope_str(scoped->stop_scope),
 		      svc_ident(scoped == svc ? s : svc, b, sizeof(b)));
 		return;
 	}

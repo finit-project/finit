@@ -18,7 +18,12 @@ All relevant changes are documented in this file.
   service.  New is a `restart` object with the restart counter,
   `restart-max`, the current restart delay and its limit, and `manual`
   and `started`.  `starts` is now there for all services, not only those
-  with `manual-start`
+  with `manual-start`.  Also new are the settings of the service: `stop`,
+  `reload`, `notify`, `remain`, `scripts`, `directories`, `log` or `tty`,
+  `cgroup-config`, `rlimits`, `provides`, `conflicts`, `if`, `groups`,
+  `capabilities`, `pam`, `name`, `id`, `protected`, `nowarn`, and the
+  state Finit keeps for its own use in `internal`, see
+  [Commands & Status](initctl.md), with a D-Bus property for each
 - Add `restart-max-sec`, a limit for the delay between restarts of a
   crashing service.  When set, the delay doubles for each restart, from
   `restart-sec` up to the limit, and comes down again as the service keeps

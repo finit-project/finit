@@ -193,6 +193,71 @@ All read-only; observable via `Properties.Get` and `Properties.GetAll`.
 | `ManualStart`   | `b`  | `manual-start` set in the `.conf`                              |
 | `Forking`       | `b`  | Daemon forks to background                                     |
 | `Started`       | `b`  | Run/task completed successfully                                |
+| `Notify` | `s` | Readiness protocol: `none`, `pid`, `systemd`, or `s6` |
+| `Remain` | `b` | `remain-after-exit` set in the `.conf` |
+| `If` | `s` | The `if` setting, raw |
+| `Provides` | `s` | Conditions from `provides`, comma separated |
+| `Conflicts` | `s` | Services from `conflicts`, comma separated |
+| `ExtraGroups` | `s` | Supplementary groups, comma separated |
+| `Capabilities` | `s` | The `capabilities` setting, comma separated |
+| `Pam` | `s` | PAM service name, empty when not set |
+| `StopSignal` | `s` | Signal that stops the service, e.g. `SIGTERM` |
+| `StopTimeout` | `u` | Seconds to wait for it to stop, before `SIGKILL` |
+| `StopScope` | `s` | `pgroup`, `process`, `cgroup`, or `mixed` |
+| `ReloadSignal` | `s` | `SIGHUP`, or `none` when a reload restarts the service |
+| `RestartSec` | `u` | The `restart-sec` setting, 0 when not set |
+| `Respawn` | `b` | `respawn` set in the `.conf` |
+| `OnCrash` | `s` | `ignore`, `reboot`, or `script` |
+| `RuntimeDir` | `s` | The `runtime-dir` setting, likewise for the four below |
+| `StateDir` | `s` |  |
+| `CacheDir` | `s` |  |
+| `LogsDir` | `s` |  |
+| `ConfigDir` | `s` |  |
+| `RuntimeDirPreserve` | `s` | `no`, `restart`, or `yes` |
+| `RuntimeDirMode` | `u` | Mode of the runtime directory, likewise for the four below |
+| `StateDirMode` | `u` |  |
+| `CacheDirMode` | `u` |  |
+| `LogsDirMode` | `u` |  |
+| `ConfigDirMode` | `u` |  |
+| `Id` | `s` | The `:ID` part of the identity, empty when there is none |
+| `Job` | `u` | Job number, internal |
+| `OldPid` | `u` | PID of the previous run, internal |
+| `Dirty` | `b` | Changed in the `.conf`, pending the next reload, internal |
+| `Removed` | `b` | Gone from the `.conf`, pending removal, internal |
+| `Starting` | `b` | Started, waiting for its PID file or readiness, internal |
+| `Protected` | `b` | Built-in service, kept when the configuration is reloaded |
+| `NoWarn` | `b` | No warning when the command is missing |
+| `ReloadPropagate` | `b` | A reload of a dependency reloads this service too, `~` in its conditions |
+| `CgroupName` | `s` | Control group the service joins, empty for the default |
+| `CgroupConfig` | `s` | Its cgroup settings, `key:value` comma separated |
+| `CgroupDelegate` | `b` | The service manages its own cgroup subtree |
+| `Rlimits` | `s` | Resource limits as `name=soft:hard`, comma separated, a number or `unlimited` |
+| `ExecStartPre` | `s` | Script, empty when not set, likewise for the five below |
+| `ExecStartPreTimeout` | `u` | Seconds the script may run, one for each script |
+| `ExecStartReady` | `s` |  |
+| `ExecStartReadyTimeout` | `u` |  |
+| `ExecStop` | `s` |  |
+| `ExecStopTimeout` | `u` |  |
+| `ExecStopPost` | `s` |  |
+| `ExecStopPostTimeout` | `u` |  |
+| `ExecReload` | `s` |  |
+| `ExecReloadTimeout` | `u` |  |
+| `ExecCleanup` | `s` |  |
+| `ExecCleanupTimeout` | `u` |  |
+| `Log` | `b` | Output is logged, not for a `tty` |
+| `LogNull` | `b` | Output is discarded |
+| `LogConsole` | `b` | Output goes to the console |
+| `LogFile` | `s` | Log file, empty for syslog |
+| `LogPriority` | `s` | Syslog facility and level, empty for the default |
+| `LogIdentity` | `s` | Syslog identity, empty for the default |
+| `TtyDevice` | `s` | Device of a `tty`, this and the below are empty or false for other types |
+| `TtyBaud` | `s` | Baud rate, empty for the default |
+| `TtyTerm` | `s` | The `TERM` to set |
+| `TtyNoClear` | `b` | `noclear` set in the `.conf` |
+| `TtyNoWait` | `b` | `nowait` set in the `.conf` |
+| `TtyNoLogin` | `b` | `nologin` set in the `.conf` |
+| `TtyNoTty` | `b` | `notty` set in the `.conf` |
+| `TtyRescue` | `b` | `rescue` set in the `.conf` |
 
 On every state transition the object also emits the standard
 `org.freedesktop.DBus.Properties.PropertiesChanged` signal: `State`

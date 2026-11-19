@@ -379,6 +379,77 @@ static inline int svc_has_cond(svc_t *svc)
 	return 0;
 }
 
+static inline const char *svc_scope_str(svc_scope_t scope)
+{
+	switch (scope) {
+	case SVC_SCOPE_PGROUP:
+		return "pgroup";
+	case SVC_SCOPE_PROCESS:
+		return "process";
+	case SVC_SCOPE_CGROUP:
+		return "cgroup";
+	case SVC_SCOPE_MIXED:
+		return "mixed";
+	}
+
+	return "unknown";
+}
+
+static inline const char *svc_notify_str(svc_t *svc)
+{
+	switch (svc->notify) {
+	case SVC_NOTIFY_NONE:
+		return "none";
+	case SVC_NOTIFY_PID:
+		return "pid";
+	case SVC_NOTIFY_SYSTEMD:
+		return "systemd";
+	case SVC_NOTIFY_S6:
+		return "s6";
+	}
+
+	return "unknown";
+}
+
+static inline const char *svc_oncrash_str(svc_t *svc)
+{
+	switch (svc->oncrash_action) {
+	case SVC_ONCRASH_REBOOT:
+		return "reboot";
+	case SVC_ONCRASH_SCRIPT:
+		return "script";
+	}
+
+	return "ignore";
+}
+
+static inline const char *svc_preserve_str(svc_t *svc)
+{
+	switch (svc->dir_preserve) {
+	case SVC_DIR_PRESERVE_RESTART:
+		return "restart";
+	case SVC_DIR_PRESERVE_YES:
+		return "yes";
+	}
+
+	return "no";
+}
+
+/* The conditions in provides, comma separated */
+static inline char *svc_provides_str(svc_t *svc, char *buf, size_t len)
+{
+	int i;
+
+	buf[0] = 0;
+	for (i = 0; i < svc->num_provides; i++) {
+		if (i)
+			strlcat(buf, ",", len);
+		strlcat(buf, svc->provides[i], len);
+	}
+
+	return buf;
+}
+
 static inline const char *svc_typestr(svc_t *svc)
 {
 	switch (svc->type) {

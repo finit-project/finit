@@ -722,6 +722,30 @@ char *rlim2str(int rlim)
 	return "unknown";
 }
 
+/* All of @rlimit as "name=soft:hard,...", a value is a number or unlimited */
+char *rlimits2str(struct rlimit *rlimit, char *buf, size_t len)
+{
+	const struct rlimit_name *rn;
+	size_t pos = 0;
+
+	buf[0] = 0;
+	for (rn = rlimit_names; rn->name && pos < len; rn++) {
+		rlim_t lim[2] = { rlimit[rn->val].rlim_cur, rlimit[rn->val].rlim_max };
+		int i;
+
+		pos += snprintf(&buf[pos], len - pos, "%s%s", pos ? "," : "", rn->name);
+		for (i = 0; i < 2 && pos < len; i++) {
+			if (lim[i] == RLIM_INFINITY)
+				pos += snprintf(&buf[pos], len - pos, "%cunlimited", i ? ':' : '=');
+			else
+				pos += snprintf(&buf[pos], len - pos, "%c%llu", i ? ':' : '=',
+						(unsigned long long)lim[i]);
+		}
+	}
+
+	return buf;
+}
+
 char *lim2str(struct rlimit *rlim)
 {
 	char tmp[25];
