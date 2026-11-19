@@ -188,6 +188,8 @@ All relevant changes are documented in this file.
 - Fix a command whose name starts like a service option, e.g. `logger` or
   `pidof`.  It was taken as the `log` or `pid` option and the next argument
   ran as the command, which also broke the `logger` example in finit.conf(5)
+- Fix `restart = "always"` skipping the initial two second delay between
+  restarts, every restart waited five seconds
 - Reject a .conf file that declares the same block title twice.  The title is
   the service identity and libConfuse merges two sections sharing one, so the
   file loaded as a single service holding a mix of both declarations,

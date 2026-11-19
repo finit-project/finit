@@ -3267,7 +3267,7 @@ static void service_cleanup_script(svc_t *svc)
 static void service_retry(svc_t *svc)
 {
 	char *restart_cnt = (char *)&svc->restart_cnt;
-	int timeout;
+	int timeout, half;
 
 	service_timeout_cancel(svc);
 
@@ -3326,8 +3326,9 @@ static void service_retry(svc_t *svc)
 	dbg("%s crashed, trying to start it again, attempt %d", svc_ident(svc, NULL, 0), *restart_cnt);
 	if ((*restart_cnt) == 1)
 		svc->restart_saved = svc->restart_tmo;
-	/* Wait 2s for the first 5 respawns, then back off to 5s */
-	timeout = ((*restart_cnt) <= (svc->restart_max / 2)) ? 2000 : 5000;
+	/* Wait 2s for the first half of the attempts, then back off to 5s */
+	half = (svc->restart_max == -1 ? SVC_RESPAWN_MAX : svc->restart_max) / 2;
+	timeout = *restart_cnt <= half ? 2000 : 5000;
 	/* If a longer timeout was specified in the conf, use that instead. */
 	svc->restart_tmo = max(svc->restart_tmo, timeout);
 	if (WIFEXITED(svc->status))

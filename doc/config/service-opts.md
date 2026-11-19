@@ -176,8 +176,9 @@ following settings are available:
   * `restart-sec = SEC` -- number of seconds before Finit tries to
     restart a crashing service.  The default is 2 seconds for the first
     half of `restart-max` attempts, then a back-off to 5 seconds -- with
-    the default `restart-max` that is the first five retries.  The
-    greater of this configured value and the back-off is used
+    the default `restart-max`, and with `restart = "always"`, that is the
+    first five retries.  The greater of this configured value and the
+    back-off is used
   * `restart = "always"` -- no upper limit on the number of times Finit
     tries to restart a crashing service
   * `restart = "never"` -- do not restart on failures.  `false` is
