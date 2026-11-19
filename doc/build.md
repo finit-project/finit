@@ -37,8 +37,8 @@ too, since libpam loads its modules with `dlopen()`.
 The configure script checks for all dependencies, including the correct
 version of the above mentioned libraries.  Currently required versions:
 
-- libite v2.2.0, or later
-- libuEv v2.2.0, or later
+- libite v2.6.1, or later
+- libuEv v2.4.1, or later
 - libConfuse v3.3, or later
 - libblkid, any version, when keventd is enabled
 - libcap, any version, unless `--disable-libcap` is given
