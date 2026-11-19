@@ -77,6 +77,8 @@ assert_delay 4 5 4 5
 
 say 'The restart counter stops where the delay peaks'
 assert "Delay and limit in status" "$(texec initctl status crash | sed -n 's/.*Restart in : //p')" = "4 sec (max 4)"
+run "initctl -j status crash"
+assert "Same in JSON" "$(texec initctl -j status crash | jq -c .restart)" = '{"count":2,"max":-1,"delay":4,"limit":4}'
 assert "Restart counter is 2" "$(texec initctl status crash | awk '/Restarts/{ print $4 }')" = "(2/-1)"
 
 sep

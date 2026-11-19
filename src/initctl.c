@@ -1755,12 +1755,27 @@ static int json_status_one(FILE *fp, struct svc_row *r, char *indent, int prev)
 		fprintf(fp,
 			"%s  \"condition\": %s,\n", indent, buf);
 
-	if (r->manual)
-		fprintf(fp,
-			"%s  \"starts\": %u,\n", indent, r->starts);
-
 	fprintf(fp,
-		"%s  \"restarts\": %d,\n", indent, r->restart_tot); /* XXX: add restart_cnt and restart_max */
+		"%s  \"manual\": %s,\n"
+		"%s  \"started\": %s,\n"
+		"%s  \"starts\": %u,\n"
+		"%s  \"restarts\": %d,\n"
+		"%s  \"restart\": {\n"
+		"%s    \"count\": %d,\n"
+		"%s    \"max\": %d,\n"
+		"%s    \"delay\": %u,\n"
+		"%s    \"limit\": %u\n"
+		"%s  },\n",
+		indent, r->manual ? "true" : "false",
+		indent, r->started ? "true" : "false",
+		indent, r->starts,
+		indent, r->restart_tot,
+		indent,
+		indent, r->restart_cnt,
+		indent, r->restart_max,
+		indent, r->restart_delay,
+		indent, r->restart_delay_max,
+		indent);
 
 	/* Add memory and CPU information if cgroup support is available */
 	if (cgrp && r->pid > 1) {

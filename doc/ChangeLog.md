@@ -14,6 +14,11 @@ All relevant changes are documented in this file.
 - The `restart_sec:` option of the line-based format is now spelled
   `restart-sec:`, kebab-case like every other setting.  The old spelling
   is still accepted
+- `initctl -j status` now has all `initctl` gets from Finit about a
+  service.  New is a `restart` object with the restart counter,
+  `restart-max`, the current restart delay and its limit, and `manual`
+  and `started`.  `starts` is now there for all services, not only those
+  with `manual-start`
 - Add `restart-max-sec`, a limit for the delay between restarts of a
   crashing service.  When set, the delay doubles for each restart, from
   `restart-sec` up to the limit, and comes down again as the service keeps

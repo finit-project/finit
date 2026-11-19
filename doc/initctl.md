@@ -146,6 +146,53 @@ Apr  8 15:02:11 alpine authpriv.info dropbear[2634]: Child connection from 192.1
 Apr  8 15:02:12 alpine authpriv.notice dropbear[2634]: Password auth succeeded for 'root' from 192.168.121.1:48576
 ```
 
+With `-j` the same command gives JSON, for scripts and other programs.
+The view above is kept short for reading, the JSON has everything
+`initctl` gets from Finit about the service:
+
+```
+alpine:~# initctl -j status dialer
+{
+  "identity": "dialer",
+  "description": "Modem dialer",
+  "type": "service",
+  "forking": false,
+  "status": "restart",
+  "exit": { "code": 1 },
+  "origin": "/etc/finit.d/enabled/dialer.conf",
+  "command": "dialer",
+  "manual": false,
+  "started": false,
+  "starts": 0,
+  "restarts": 7,
+  "restart": {
+    "count": 4,
+    "max": -1,
+    "delay": 160,
+    "limit": 300
+  },
+  "pidfile": "none",
+  "pid": 0,
+  "user": "root",
+  "group": "root",
+  "uptime": 0,
+  "runlevels": [ 2, 3, 4, 5 ]
+}
+```
+
+In `restart`, `count` is the restart counter that `restart-max`, here
+`max`, is compared to, -1 for `restart = "always"`.  The total since
+boot is in `restarts`.  `delay` is the number of seconds before the
+next restart, should the service crash, and `limit` is its
+`restart-max-sec`, 0 when not set.  `environment`, `condition`, `exit`,
+and the cgroup members `cgroup`, `memory`, `cpu`, and `limits` are left
+out when they do not apply.
+
+```
+alpine:~# initctl -j status dialer | jq .restart.delay
+160
+```
+
 
 Switch Root
 -----------
