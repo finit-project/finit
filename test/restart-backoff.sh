@@ -54,3 +54,16 @@ crash 'restart = "always"'
 assert_delay 1 2 0 1
 assert_delay 2 3 2 3
 assert_delay 3 4 2 3
+
+sep
+say 'restart-max-sec, the delay doubles from restart-sec up to the limit'
+crash 'restart         = "always"
+    restart-sec     = 1
+    restart-max-sec = 4'
+assert_delay 1 2 1 2
+assert_delay 2 3 2 3
+assert_delay 3 4 4 5
+assert_delay 4 5 4 5
+
+say 'The restart counter stops where the delay peaks'
+assert "Restart counter is 2" "$(texec initctl status crash | awk '/Restarts/{ print $4 }')" = "(2/-1)"

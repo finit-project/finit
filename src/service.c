@@ -2332,6 +2332,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 	int forking = 0, manual = 0, remain = 0, nowarn = 0;
 	int restart_max = SVC_RESPAWN_MAX;
 	int restart_tmo = 0;
+	int restart_tmo_max = 0;
 	unsigned oncrash_action = SVC_ONCRASH_IGNORE;
 	char *line, *args;
 	svc_t *svc;
@@ -2399,6 +2400,13 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 			restart_tmo = atoi(arg) * 1000;
 		else if (MATCH_CMD(cmd, "restart_sec:", arg))
 			restart_tmo = atoi(arg) * 1000;
+		else if (MATCH_CMD(cmd, "restart-max-sec:", arg)) {
+			const char *errstr;
+
+			restart_tmo_max = (int)strtonum(arg, 0, 86400, &errstr) * 1000;
+			if (errstr)
+				warnx("restart-max-sec %s is %s (0-86400), ignoring", arg, errstr);
+		}
 		else if (!strcasecmp(cmd, "norestart"))
 			restart_max = 0;
 		else if (!strcasecmp(cmd, "nowarn"))
@@ -2744,6 +2752,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 	svc->forking = forking;
 	svc->restart_max = restart_max;
 	svc->restart_tmo = restart_tmo;
+	svc->restart_tmo_max = restart_tmo_max;
 	svc->oncrash_action = oncrash_action;
 
 	/* Decode any (optional) pid:/optional/path/to/file.pid */
@@ -3265,11 +3274,53 @@ static void service_cleanup_script(svc_t *svc)
 	service_timeout_after(svc, svc->cleanup_tmo, service_kill_script);
 }
 
-/* Saturates, restart always has no restart_max to stop the count */
+/* Doubles with the instability index, up to restart-max-sec, issue #306 */
+static int restart_backoff(svc_t *svc, int cnt)
+{
+	int tmo = svc->restart_saved;
+
+	/* No restart-sec, the first restart was immediate */
+	if (tmo < 1000) {
+		tmo = 2000;
+		cnt--;
+	}
+
+	while (cnt-- > 0 && tmo < svc->restart_tmo_max)
+		tmo = tmo > svc->restart_tmo_max / 2 ? svc->restart_tmo_max : tmo * 2;
+
+	return tmo;
+}
+
+/* Delay before the next restart of a crashing service */
+static int restart_delay(svc_t *svc)
+{
+	int half;
+
+	if (svc->restart_tmo_max)
+		return restart_backoff(svc, svc->restart_cnt);
+
+	/* Wait 2s for the first half of the attempts, then back off to 5s */
+	half = (svc->restart_max == -1 ? SVC_RESPAWN_MAX : svc->restart_max) / 2;
+
+	/* If a longer timeout was specified in the conf, use that instead. */
+	return max(svc->restart_tmo, svc->restart_cnt <= half ? 2000 : 5000);
+}
+
+/*
+ * Saturates, restart always has no restart_max to stop the count.
+ * It stops where the back-off peaks, so aging soon brings it down.
+ */
 static void restart_cnt_inc(svc_t *svc)
 {
 	int *restart_cnt = (int *)&svc->restart_cnt;
-	int limit = svc->restart_max == -1 ? SVC_RESPAWN_MAX : INT_MAX;
+	int limit = INT_MAX;
+
+	if (svc->restart_max == -1) {
+		if (!svc->restart_tmo_max)
+			limit = SVC_RESPAWN_MAX;
+		else if (*restart_cnt && restart_backoff(svc, *restart_cnt) >= svc->restart_tmo_max)
+			return;
+	}
 
 	if (*restart_cnt < limit)
 		(*restart_cnt)++;
@@ -3278,7 +3329,6 @@ static void restart_cnt_inc(svc_t *svc)
 static void service_retry(svc_t *svc)
 {
 	int *restart_cnt = (int *)&svc->restart_cnt;
-	int timeout, half;
 
 	service_timeout_cancel(svc);
 
@@ -3335,11 +3385,7 @@ static void service_retry(svc_t *svc)
 	restart_cnt_inc(svc);
 
 	dbg("%s crashed, trying to start it again, attempt %d", svc_ident(svc, NULL, 0), *restart_cnt);
-	/* Wait 2s for the first half of the attempts, then back off to 5s */
-	half = (svc->restart_max == -1 ? SVC_RESPAWN_MAX : svc->restart_max) / 2;
-	timeout = *restart_cnt <= half ? 2000 : 5000;
-	/* If a longer timeout was specified in the conf, use that instead. */
-	svc->restart_tmo = max(svc->restart_tmo, timeout);
+	svc->restart_tmo = restart_delay(svc);
 	if (WIFEXITED(svc->status))
 		logit(LOG_CONSOLE|LOG_WARNING,
 		      "Service %s[%d] died (exit status: %d), restarting (retry in %d msec) (attempt: %d/%d)",

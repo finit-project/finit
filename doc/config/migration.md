@@ -64,6 +64,7 @@ Service options
 | `remain:yes`                     | `remain-after-exit = true`                       |
 | `restart:always` / `restart:NUM` | `restart = "always"` / `restart-max = NUM`       |
 | `restart_sec:SEC`                | `restart-sec = SEC`                              |
+| `restart-max-sec:SEC`            | `restart-max-sec = SEC`                          |
 | `norestart`                      | `restart = "never"`                              |
 | `respawn`                        | `respawn = true`                                 |
 | `oncrash:reboot`                 | `oncrash = "reboot"`                             |

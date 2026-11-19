@@ -177,6 +177,7 @@ typedef struct svc {
 	int            restart_max;    /* Maximum number of restarts allowed */
 	int            restart_saved;  /* INTERNAL, saved copy of .conf value */
 	int            restart_tmo;    /* Time before restarting a crashing service */
+	int            restart_tmo_max;/* restart-max-sec, 0: fixed back-off, issue #306 */
 	unsigned char  oncrash_action; /* Action to perform in crashed state. */
 	char           respawn;	       /* ttys, or services with `respawn`, never increment restart_cnt */
 	const int      restart_cnt;    /* Incremented for each restart by service monitor. */

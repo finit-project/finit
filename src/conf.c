@@ -261,6 +261,7 @@ static cfg_opt_t svc_opts[] = {
 	CFG_STR     ("restart",      NULL, CFGF_NODEFAULT),
 	CFG_INT     ("restart-max",  0,    CFGF_NODEFAULT),
 	CFG_INT     ("restart-sec",  0,    CFGF_NODEFAULT),
+	CFG_INT     ("restart-max-sec", 0, CFGF_NODEFAULT),
 	CFG_STR     ("oncrash",      NULL, CFGF_NODEFAULT),
 	CFG_STR     ("reload-signal", NULL, CFGF_NODEFAULT),
 	CFG_BOOL    ("required",     cfg_true, CFGF_NODEFAULT),
@@ -1668,6 +1669,8 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
 
 	if (sec_getint(sec, "restart-sec", NULL, &num))
 		addtok(line, sizeof(line), "restart_sec:%ld", num);
+	if (sec_getint(sec, "restart-max-sec", NULL, &num))
+		addtok(line, sizeof(line), "restart-max-sec:%ld", num);
 
 	if ((str = sec_getstr(sec, "oncrash", NULL)))
 		addtok(line, sizeof(line), "oncrash:%s", str);

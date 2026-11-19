@@ -11,6 +11,10 @@ All relevant changes are documented in this file.
 - `shutdown` now takes a time, `now`, `+MIN`, or `HH:MM`, and a message.
   Finit warns logged-in users as the time approaches, refuses new logins
   from five minutes before, and `shutdown -c` cancels.  Issue #149
+- Add `restart-max-sec`, a limit for the delay between restarts of a
+  crashing service.  When set, the delay doubles for each restart, from
+  `restart-sec` up to the limit, and comes down again as the service keeps
+  running.  Issue #306
 - Add `stop-scope`, which processes a stop applies to: `pgroup`, the process
   group of the main process (default), `process`, only the main process,
   `cgroup`, the cgroup of the service, or `mixed` like systemd.  Issue #413

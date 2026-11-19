@@ -179,6 +179,16 @@ following settings are available:
     the default `restart-max`, and with `restart = "always"`, that is the
     first five retries.  The greater of this configured value and the
     back-off is used
+  * `restart-max-sec = SEC` -- replaces that back-off with a delay that
+    doubles for each restart, from `restart-sec` up to this limit.  With
+    `restart-sec = 10` and `restart-max-sec = 300` Finit waits 10, 20,
+    40, 80, 160, and then 300 seconds.  Without `restart-sec` the first
+    restart is at once, then after 2, 4, 8 seconds, and so on.  A service
+    that stays up longer than the current delay is restarted after
+    `restart-sec` the next time it crashes, and the delay comes down
+    again the longer the service keeps running.  Useful with
+    `restart = "always"`, for a service that should be retried forever,
+    only less and less often
   * `restart = "always"` -- no upper limit on the number of times Finit
     tries to restart a crashing service
   * `restart = "never"` -- do not restart on failures.  `false` is
