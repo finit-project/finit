@@ -63,7 +63,7 @@ Service options
 | `manual:yes`                     | `manual-start = true`                            |
 | `remain:yes`                     | `remain-after-exit = true`                       |
 | `restart:always` / `restart:NUM` | `restart = "always"` / `restart-max = NUM`       |
-| `restart_sec:SEC`                | `restart-sec = SEC`                              |
+| `restart-sec:SEC`                | `restart-sec = SEC`                              |
 | `restart-max-sec:SEC`            | `restart-max-sec = SEC`                          |
 | `norestart`                      | `restart = "never"`                              |
 | `respawn`                        | `respawn = true`                                 |
@@ -82,7 +82,8 @@ Service options
 | `if:svc` / `if:<cond>`           | `if = "svc"` / `if = "cond"`, no angle brackets  |
 | `tty:/dev/x`                     | `tty = "/dev/x"`                                 |
 | `nowarn`                         | leading `-` on `command` or `envfile`            |
-| `restarttmo:`                    | dropped, was already an alias for `restart_sec:` |
+| `restart_sec:`                   | old spelling of `restart-sec:`, still accepted   |
+| `restarttmo:`                    | dropped, was already an alias for `restart-sec:` |
 
 Repeated stanzas
 ----------------

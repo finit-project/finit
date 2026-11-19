@@ -2396,9 +2396,9 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 			else
 				restart_max = atoi(arg);
 		}
-		else if (MATCH_CMD(cmd, "restarttmo:", arg)) /* compat alias */
-			restart_tmo = atoi(arg) * 1000;
-		else if (MATCH_CMD(cmd, "restart_sec:", arg))
+		else if (MATCH_CMD(cmd, "restart-sec:", arg) ||
+			 MATCH_CMD(cmd, "restart_sec:", arg) ||	/* compat alias */
+			 MATCH_CMD(cmd, "restarttmo:", arg))	/* compat alias */
 			restart_tmo = atoi(arg) * 1000;
 		else if (MATCH_CMD(cmd, "restart-max-sec:", arg)) {
 			const char *errstr;

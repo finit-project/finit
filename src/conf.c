@@ -1668,7 +1668,7 @@ static void svc_translate(cfg_t *sec, int type, struct rlimit rlimit[], char *fi
 	}
 
 	if (sec_getint(sec, "restart-sec", NULL, &num))
-		addtok(line, sizeof(line), "restart_sec:%ld", num);
+		addtok(line, sizeof(line), "restart-sec:%ld", num);
 	if (sec_getint(sec, "restart-max-sec", NULL, &num))
 		addtok(line, sizeof(line), "restart-max-sec:%ld", num);
 

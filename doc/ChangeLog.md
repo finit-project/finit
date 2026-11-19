@@ -11,6 +11,9 @@ All relevant changes are documented in this file.
 - `shutdown` now takes a time, `now`, `+MIN`, or `HH:MM`, and a message.
   Finit warns logged-in users as the time approaches, refuses new logins
   from five minutes before, and `shutdown -c` cancels.  Issue #149
+- The `restart_sec:` option of the line-based format is now spelled
+  `restart-sec:`, kebab-case like every other setting.  The old spelling
+  is still accepted
 - Add `restart-max-sec`, a limit for the delay between restarts of a
   crashing service.  When set, the delay doubles for each restart, from
   `restart-sec` up to the limit, and comes down again as the service keeps

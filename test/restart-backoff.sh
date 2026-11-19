@@ -32,6 +32,16 @@ CONF
     run "initctl reload"
 }
 
+# Same, with the line-based format, options in $1
+crash_line()
+{
+    run "rm -f $FINIT_CONF"
+    run "initctl reload"
+    run "rm -f $STARTS"
+    run "echo 'service $1 crash.sh -- Crashing' > $FINIT_CONF"
+    run "initctl reload"
+}
+
 test_teardown()
 {
     say "Running test teardown."
@@ -67,3 +77,10 @@ assert_delay 4 5 4 5
 
 say 'The restart counter stops where the delay peaks'
 assert "Restart counter is 2" "$(texec initctl status crash | awk '/Restarts/{ print $4 }')" = "(2/-1)"
+
+sep
+say 'restart-sec in the line-based format, and its old spelling'
+crash_line 'restart:always restart-sec:3'
+assert_delay 1 2 3 4
+crash_line 'restart:always restart_sec:3'
+assert_delay 1 2 3 4
