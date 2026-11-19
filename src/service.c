@@ -2776,6 +2776,7 @@ svc_t *service_register_desc(int type, char *cfg, const char *desc,
 	/* TTYs need a longer default to throttle errors (e.g., missing device) */
 	if (svc_is_tty(svc) && svc->restart_tmo == 0)
 		svc->restart_tmo = 2000;
+	svc->restart_saved = svc->restart_tmo;
 
 	/* Set configured limits */
 	memcpy(svc->rlimit, rlimit, sizeof(svc->rlimit));
@@ -3334,8 +3335,6 @@ static void service_retry(svc_t *svc)
 	restart_cnt_inc(svc);
 
 	dbg("%s crashed, trying to start it again, attempt %d", svc_ident(svc, NULL, 0), *restart_cnt);
-	if ((*restart_cnt) == 1)
-		svc->restart_saved = svc->restart_tmo;
 	/* Wait 2s for the first half of the attempts, then back off to 5s */
 	half = (svc->restart_max == -1 ? SVC_RESPAWN_MAX : svc->restart_max) / 2;
 	timeout = *restart_cnt <= half ? 2000 : 5000;

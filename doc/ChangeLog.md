@@ -188,6 +188,8 @@ All relevant changes are documented in this file.
 - Fix a command whose name starts like a service option, e.g. `logger` or
   `pidof`.  It was taken as the `log` or `pid` option and the next argument
   ran as the command, which also broke the `logger` example in finit.conf(5)
+- Fix the delay before the first restart of a crashing service, it could
+  grow to the back-off delay and stay there until the next reload
 - Fix the restart counter of a service with `restart = "always"`, nothing
   stopped it and it overflowed after 127 restarts, 255 on Arm.  It now
   stops at 10, where the back-off has long since peaked, and ages from
