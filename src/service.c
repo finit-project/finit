@@ -3264,9 +3264,19 @@ static void service_cleanup_script(svc_t *svc)
 	service_timeout_after(svc, svc->cleanup_tmo, service_kill_script);
 }
 
+/* Saturates, restart always has no restart_max to stop the count */
+static void restart_cnt_inc(svc_t *svc)
+{
+	int *restart_cnt = (int *)&svc->restart_cnt;
+	int limit = svc->restart_max == -1 ? SVC_RESPAWN_MAX : INT_MAX;
+
+	if (*restart_cnt < limit)
+		(*restart_cnt)++;
+}
+
 static void service_retry(svc_t *svc)
 {
-	char *restart_cnt = (char *)&svc->restart_cnt;
+	int *restart_cnt = (int *)&svc->restart_cnt;
 	int timeout, half;
 
 	service_timeout_cancel(svc);
@@ -3321,7 +3331,7 @@ static void service_retry(svc_t *svc)
 		return;
 	}
 
-	(*restart_cnt)++;
+	restart_cnt_inc(svc);
 
 	dbg("%s crashed, trying to start it again, attempt %d", svc_ident(svc, NULL, 0), *restart_cnt);
 	if ((*restart_cnt) == 1)
@@ -3478,7 +3488,6 @@ void service_ready(svc_t *svc, int ready)
  */
 int service_step(svc_t *svc)
 {
-	char *restart_cnt = (char *)&svc->restart_cnt;
 	int changed = 0, waiting = 0;
 	svc_state_t old_state;
 	cond_state_t cond;
@@ -3669,7 +3678,7 @@ restart:
 				svc_set_state(svc, SVC_HALTED_STATE);
 				break;
 			}
-			(*restart_cnt)++;
+			restart_cnt_inc(svc);
 			break;
 		}
 
@@ -3773,7 +3782,7 @@ restart:
 		}
 
 		if (!svc->pid) {
-			(*restart_cnt)++;
+			restart_cnt_inc(svc);
 			svc_set_state(svc, SVC_WAITING_STATE);
 			break;
 		}
@@ -4097,7 +4106,7 @@ static void service_interval_cb(uev_t *w, void *arg, int events)
 
 	for (svc = svc_iterator(&iter, 1); svc; svc = svc_iterator(&iter, 0)) {
 		if (svc_is_daemon(svc)) {
-			char *restart_cnt = (char *)&svc->restart_cnt;
+			int *restart_cnt = (int *)&svc->restart_cnt;
 
 			if (!svc_is_running(svc))
 				continue;

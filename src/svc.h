@@ -179,7 +179,7 @@ typedef struct svc {
 	int            restart_tmo;    /* Time before restarting a crashing service */
 	unsigned char  oncrash_action; /* Action to perform in crashed state. */
 	char           respawn;	       /* ttys, or services with `respawn`, never increment restart_cnt */
-	const char     restart_cnt;    /* Incremented for each restart by service monitor. */
+	const int      restart_cnt;    /* Incremented for each restart by service monitor. */
 
 	union {
 		/* services we redirect stdout/stderr to syslog (not TTYs!) */
