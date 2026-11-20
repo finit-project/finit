@@ -614,6 +614,7 @@ static void tmpfiles(char *line)
 				if (dirperm(p, mode, uid, gid) && errno != ENOTDIR)
 					warn("Failed setting mode/owner on %s", p);
 			}
+			globfree(&gl);
 			break;
 		}
 		case 'f':
