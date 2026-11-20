@@ -54,12 +54,13 @@ All relevant changes are documented in this file.
 - Fix misspelled `SIGUNKOWN` returned by `sig_name()` for unknown
   signal numbers, now spelled correctly as `SIGUNKNOWN`.  Surfaced by
   the new restart log above
-- Fix mode of existing `d`/`D` directories in tmpfiles, the chmod branch
-  never ran because the directory creation swallowed `EEXIST`.  Mode and
-  owner of `d`/`D`, `e`, and `f`/`F` entries, and of the directories
-  `mksubsys()` creates for the dbus plugin, are now set through an open fd
-  and only when they differ, so an immutable directory like `/var/empty`
-  no longer warns on every boot.  By Sam Brkopac
+- Fix mode of existing `d`/`D` directories in tmpfiles when the entry
+  gives one, the chmod branch never ran because the directory creation
+  swallowed `EEXIST`.  Mode and owner of `d`/`D`, `e`, and `f`/`F`
+  entries, and of the directories `mksubsys()` creates for the dbus
+  plugin, are now set through an open fd and only when they differ, so
+  an immutable directory like `/var/empty` no longer warns on every
+  boot.  By Sam Brkopac
 - Fix crash at config load for a `stop:` or `reload:` script written
   with a timeout, e.g. `stop:5,/bin/true`, which took PID 1 down
 - Fix a lost reload for a service paused mid-reload by a condition in

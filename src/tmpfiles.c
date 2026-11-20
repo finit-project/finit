@@ -587,9 +587,7 @@ static void tmpfiles(char *line)
 				if (gid < 0)
 					gid = 0;
 
-				if (!mode)
-					mode = 0755;
-				rc = makedir(path, mode);
+				rc = makedir(path, mode ?: 0755);
 				if (!rc && dirperm(path, mode, uid, gid))
 					warn("Failed setting mode/owner on %s", path);
 			}

@@ -65,6 +65,7 @@ EXTRA_DIST		+= start-stop-sysv.sh
 EXTRA_DIST		+= start-stop-serv.sh
 EXTRA_DIST		+= signal-service.sh
 EXTRA_DIST		+= testserv.sh
+EXTRA_DIST		+= tmpfiles-perm.sh
 EXTRA_DIST		+= unexpected-restart.sh
 
 AM_TESTS_ENVIRONMENT	 = SYSROOT='$(abs_builddir)/sysroot/';
@@ -115,6 +116,7 @@ TESTS			+= start-stop-serv.sh
 TESTS			+= signal-service.sh
 if TESTSERV
 TESTS			+= testserv.sh
+TESTS			+= tmpfiles-perm.sh
 endif
 TESTS			+= unexpected-restart.sh
 
