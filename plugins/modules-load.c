@@ -156,6 +156,7 @@ static int modules_load(const char *file, int index)
 			}
 
 			/* unknown 'set' command, ignore. */
+			free(set);
 			goto next;
 		}
 
