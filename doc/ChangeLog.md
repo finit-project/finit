@@ -67,6 +67,12 @@ All relevant changes are documented in this file.
   and cleared the pending mark, so the service resumed without ever being
   reloaded.  Seen on Infix, where sshd kept its old listen addresses after
   a change that landed as two reloads in a row
+- Fix crash on a line with a key but no value, or no separator at all.
+  A `VERSION=` line in `/etc/os-release` crashed getty, the same in
+  `.initrc` crashed `initctl`, and a bare `set` or `set index=` line in
+  a `modules-load.d` file crashed the `modules-load` plugin, taking down
+  PID 1.  An unknown `set` line there also leaked memory.  Found by
+  Tobias Waldekranz
 
 [4.17][] - 2026-04-28
 ---------------------
