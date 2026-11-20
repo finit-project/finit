@@ -123,22 +123,13 @@ static inline char *fgetval(const char *line, const char *key, char *sep)
 		return NULL;
 
 	ptr = strsep(&str, sep);
-	if (ptr && strcmp(ptr, key)) {
-	fail:
+	if (!str || strcmp(ptr, key)) {
 		free(copy);
 		return NULL;
 	}
 
-	/*
-	 * Check if we should strip optional separator, e.g.,
-	 * 'foo = bar' => '= bar' should be stripped to 'bar'
-	 */
-	while (strchr(sep, str[0])) {
-		ptr = strsep(&str, sep);
-		if (!ptr)
-			goto fail;
-	}
-	ptr = str;
+	/* strip optional separators, e.g., 'foo = bar' => 'bar' */
+	ptr = str + strspn(str, sep);
 
 	if (*ptr == '"' || *ptr == '\'') {
 		char *end = &ptr[strlen(ptr) - 1];
